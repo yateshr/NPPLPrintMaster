@@ -18,7 +18,12 @@ namespace NPPLPrintMaster
         private Bitmap previewBmp;
         private List<CanvasItem> rawItems;
 
-        public JobCardPreviewForm(Bitmap generatedBmp, List<CanvasItem> itemsForBuilder)
+        public JobCardPreviewForm(
+            Bitmap generatedBmp,
+            List<CanvasItem> itemsForBuilder,
+            WorkspaceData workspaceData,
+            AppSettings appSettings,
+            string initialSaveDirectory)
         {
             this.Text = "Job Card Preview - NPPL PrintMaster";
             this.Size = new Size(900, 750);
@@ -57,13 +62,142 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 9, FontStyle.Bold)
             };
             btnSave.FlatAppearance.BorderSize = 0;
-            btnSave.Click += (s, e) => {
-                using (SaveFileDialog sfd = new SaveFileDialog { Filter = "BMP Image|*.bmp", FileName = "JobCard_Automated.bmp" })
+            btnSave.Click += (s, e) =>
+            {
+                using (SaveFileDialog sfd = new SaveFileDialog
                 {
-                    if (sfd.ShowDialog() == DialogResult.OK)
+                    Filter = "BMP Image|*.bmp",
+                    FileName = "JobCard_Automated.bmp",
+                    AddExtension = true,
+                    DefaultExt = "bmp"
+                })
+                {
+                    if (!string.IsNullOrWhiteSpace(initialSaveDirectory) &&
+                        Directory.Exists(initialSaveDirectory))
                     {
-                        previewBmp.Save(sfd.FileName, System.Drawing.Imaging.ImageFormat.Bmp);
-                        MessageBox.Show("Job card saved successfully!", "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        sfd.InitialDirectory = initialSaveDirectory;
+                    }
+
+                    if (sfd.ShowDialog() != DialogResult.OK)
+                        return;
+
+                    string savedBmpPath = sfd.FileName;
+                    bool bmpSaved = false;
+
+                    try
+                    {
+                        // 1. Save the final Job Card BMP exactly where the user selected.
+                        previewBmp.Save(
+                            savedBmpPath,
+                            System.Drawing.Imaging.ImageFormat.Bmp);
+
+                        bmpSaved = true;
+
+                        // 2. Remember the selected BMP folder for the next Save Job Card.
+                        string bmpFolder =
+                            Path.GetDirectoryName(savedBmpPath);
+
+                        if (appSettings != null &&
+                            !string.IsNullOrWhiteSpace(bmpFolder) &&
+                            Directory.Exists(bmpFolder))
+                        {
+                            appSettings.LastJobCardSaveFolder = bmpFolder;
+                            SettingsManager.Save(appSettings);
+                        }
+
+                        // 3. Build the exact requested NPPL storage location:
+                        //    C:\Users\<user>\Documents\NPPLPrintMaster
+                        string userProfile =
+                            Environment.GetFolderPath(
+                                Environment.SpecialFolder.UserProfile);
+
+                        if (string.IsNullOrWhiteSpace(userProfile))
+                            throw new InvalidOperationException(
+                                "Windows user profile folder could not be determined.");
+
+                        string npplFolder =
+                            Path.Combine(
+                                userProfile,
+                                "Documents",
+                                "NPPLPrintMaster");
+
+                        Directory.CreateDirectory(npplFolder);
+
+                        string baseName =
+                            Path.GetFileNameWithoutExtension(savedBmpPath);
+
+                        if (string.IsNullOrWhiteSpace(baseName))
+                            throw new InvalidOperationException(
+                                "The saved Job Card filename could not be determined.");
+
+                        string npplPath =
+                            Path.Combine(
+                                npplFolder,
+                                baseName + ".nppl");
+
+                        // 4. Save the actual workspace directly from this same button.
+                        //    No callback is used in V4.
+                        if (workspaceData == null)
+                            throw new InvalidOperationException(
+                                "Workspace data was not supplied to the Job Card preview.");
+
+                        WorkspaceEngine.SaveToFile(
+                            npplPath,
+                            workspaceData);
+
+                        // 5. Verify Windows actually created the file.
+                        if (!File.Exists(npplPath))
+                        {
+                            throw new IOException(
+                                "WorkspaceEngine completed, but the NPPL file does not exist.\n\n" +
+                                "Expected file:\n" +
+                                npplPath);
+                        }
+
+                        FileInfo npplInfo =
+                            new FileInfo(npplPath);
+
+                        if (npplInfo.Length <= 0)
+                        {
+                            throw new IOException(
+                                "The NPPL file was created but is empty.\n\n" +
+                                npplPath);
+                        }
+
+                        Logger.LogAction(
+                            "WORKSPACE_AUTO_SAVE",
+                            "BMP: " + savedBmpPath +
+                            " | NPPL: " + npplPath);
+
+                        MessageBox.Show(
+                            "Job card saved successfully.\n\n" +
+                            "BMP:\n" +
+                            savedBmpPath +
+                            "\n\n" +
+                            "NPPL workspace:\n" +
+                            npplPath,
+                            "Job Card + NPPL Saved",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        string message =
+                            bmpSaved
+                                ? "The BMP was saved successfully, but the matching NPPL workspace could not be saved."
+                                : "The Job Card BMP could not be saved.";
+
+                        MessageBox.Show(
+                            message +
+                            "\n\n" +
+                            "BMP:\n" +
+                            savedBmpPath +
+                            "\n\n" +
+                            "Error:\n" +
+                            ex.ToString(),
+                            "Save Error",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
                     }
                 }
             };
@@ -82,7 +216,7 @@ namespace NPPLPrintMaster
             btnCustomize.FlatAppearance.BorderSize = 0;
             btnCustomize.Click += (s, e) => {
                 this.Hide();
-                FreeformBuilderForm builder = new FreeformBuilderForm(rawItems);
+                FreeformBuilderForm builder = new FreeformBuilderForm(rawItems, workspaceData, appSettings, initialSaveDirectory);
                 builder.ShowDialog();
                 this.Close();
             };
@@ -154,9 +288,24 @@ namespace NPPLPrintMaster
 
         private FlowLayoutPanel pnlProducts, pnlCartons, pnlOthers;
         private TextBox txtLane1Text, txtLane2Text;
+
+        // Smart Image Finder V1.1
+        private TextBox txtSmartProductFolder, txtSmartCartonFolder;
+        private TextBox txtSmartProductCode, txtSmartCartonCode;
+        private ListBox lstSmartProductResults, lstSmartCartonResults;
+        private PictureBox pbSmartProductPreview, pbSmartCartonPreview;
+        private Label lblSmartStatus, lblSmartHealth;
+        private Button btnSmartRefresh;
+        private CheckBox chkSmartMonitor;
+        private FileSystemWatcher smartProductWatcher, smartCartonWatcher;
+        private System.Windows.Forms.Timer smartMonitorTimer;
+        private bool smartRefreshRunning;
+        private SmartImageFinderEngine productImageIndex = new SmartImageFinderEngine("ProductBarcodes");
+        private SmartImageFinderEngine cartonImageIndex = new SmartImageFinderEngine("CartonBarcodes");
+
         private CheckBox chkShowText1, chkShowText2;
-        private Font fontLane1 = new Font("Arial", 14, FontStyle.Bold);
-        private Font fontLane2 = new Font("Arial", 14, FontStyle.Bold);
+        private Font fontLane1 = new Font("Calibri", 14, FontStyle.Bold);
+        private Font fontLane2 = new Font("Calibri", 14, FontStyle.Bold);
 
         private List<string> customLayoutMemory = new List<string>();
 
@@ -940,12 +1089,24 @@ namespace NPPLPrintMaster
 
             pageCompose.Controls.AddRange(new Control[] { chkShowText1, txtLane1Text, btnFont1, chkShowText2, txtLane2Text, btnFont2, btnRun3, btnClear });
 
+            // Optional Smart Image Finder. Existing manual lanes above stay
+            // exactly as they are and remain available at all times.
+            BuildSmartImageFinder();
+
             GroupBox grpTheme = new GroupBox { Text = "Appearance", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(600, 100) };
             Label lblTheme = new Label { Text = "Global Theme:", Location = new Point(20, 40), AutoSize = true, Font = new Font("Segoe UI", 10) };
             cmbTheme = new ComboBox { Location = new Point(140, 37), Size = new Size(200, 28), DropDownStyle = ComboBoxStyle.DropDownList };
-            cmbTheme.Items.AddRange(new object[] { "NPPL Corporate", "BarTender Classic", "Midnight Dark", "Industrial", "Modern Windows", "Dracula Dark", "Discord Theme", "GitHub Light" });
+            cmbTheme.Items.AddRange(ThemeManager.ThemeNames);
+
+            if (!cmbTheme.Items.Contains(currentSettings.Theme))
+                currentSettings.Theme = "Midnight Dark";
+
             cmbTheme.SelectedItem = currentSettings.Theme;
-            cmbTheme.SelectedIndexChanged += (s, e) => ApplyTheme(cmbTheme.SelectedItem.ToString());
+            cmbTheme.SelectedIndexChanged += (s, e) =>
+            {
+                if (cmbTheme.SelectedItem != null)
+                    ApplyTheme(cmbTheme.SelectedItem.ToString());
+            };
             grpTheme.Controls.AddRange(new Control[] { lblTheme, cmbTheme });
 
             GroupBox grpDefs = new GroupBox { Text = "Application Defaults", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 120), Size = new Size(600, 200) };
@@ -1044,7 +1205,9 @@ namespace NPPLPrintMaster
             foreach (Button btn in navButtons)
             {
                 btn.BackColor = (btn == activeNavButton) ? activeColor : sidebarColor;
-                btn.ForeColor = (btn == activeNavButton) ? Color.White : ((sidebarColor.R > 200) ? Color.Black : Color.LightGray);
+                btn.ForeColor = (btn == activeNavButton)
+                    ? ThemeManager.GetContrastTextColor(activeColor)
+                    : ThemeManager.GetContrastTextColor(sidebarColor);
                 if (btn.Text.Contains("Pro Freeform")) btn.ForeColor = (sidebarColor.R > 200 && btn != activeNavButton) ? Color.DarkGoldenrod : Color.Gold;
             }
 
@@ -1054,54 +1217,364 @@ namespace NPPLPrintMaster
             ThemeManager.ApplyColorsToControls(pageCompose.Controls, activeTheme);
             ThemeManager.ApplyColorsToControls(pageSettings.Controls, activeTheme);
 
-            if (btnRun1 != null) { btnRun1.BackColor = activeColor; btnRun1.ForeColor = Color.White; }
-            if (btnSaveSettings != null) { btnSaveSettings.BackColor = activeColor; btnSaveSettings.ForeColor = Color.White; }
+            if (btnRun1 != null)
+            {
+                btnRun1.BackColor = activeColor;
+                btnRun1.ForeColor = ThemeManager.GetContrastTextColor(activeColor);
+            }
 
-            bool isLightTheme = sidebarColor.R > 200;
+            if (btnSaveSettings != null)
+            {
+                btnSaveSettings.BackColor = activeColor;
+                btnSaveSettings.ForeColor = ThemeManager.GetContrastTextColor(activeColor);
+            }
+
+            // Determine workspace brightness from the actual content surface,
+            // not from the sidebar. This is important for themes with a dark
+            // blue sidebar and a light workspace.
+            bool isLightTheme = ThemeManager.IsLight(contentBg);
 
             foreach (Control c in pageCompose.Controls)
             {
                 if (c is Panel wrapper && wrapper.Size.Width == 310)
                 {
-                    wrapper.BackColor = isLightTheme ? Color.WhiteSmoke : Color.FromArgb(50, 52, 59);
+                    wrapper.BackColor = contentBg;
 
                     foreach (Control child in wrapper.Controls)
                     {
                         if (child is Label lbl)
-                            lbl.ForeColor = isLightTheme ? Color.Black : activeColor;
+                            lbl.ForeColor = textColor;
 
                         if (child is FlowLayoutPanel flp)
-                            flp.BackColor = isLightTheme ? Color.White : Color.FromArgb(38, 40, 46);
+                            flp.BackColor = controlBg;
 
                         if (child is Button btnBrowse)
                         {
-                            btnBrowse.BackColor = isLightTheme ? Color.Gainsboro : Color.FromArgb(28, 29, 33);
-                            btnBrowse.ForeColor = isLightTheme ? Color.Black : Color.White;
+                            btnBrowse.BackColor = controlBg;
+                            btnBrowse.ForeColor = textColor;
+                            btnBrowse.FlatAppearance.BorderColor = activeTheme.BorderColor;
                         }
                     }
                 }
                 else if (c is TextBox txt)
                 {
-                    txt.BackColor = isLightTheme ? Color.White : Color.FromArgb(50, 52, 59);
-                    txt.ForeColor = isLightTheme ? Color.Black : Color.White;
+                    txt.BackColor = controlBg;
+                    txt.ForeColor = textColor;
                 }
                 else if (c is Button btnAction)
                 {
                     if (btnAction.Text.Contains("Generate"))
                     {
                         btnAction.BackColor = activeColor;
-                        btnAction.ForeColor = (activeColor.R > 200 && activeColor.G > 200) ? Color.Black : Color.White;
+                        btnAction.ForeColor = ThemeManager.GetContrastTextColor(activeColor);
                     }
                     else if (btnAction.Text.Contains("Clear"))
                     {
-                        btnAction.BackColor = isLightTheme ? Color.WhiteSmoke : Color.FromArgb(28, 29, 33);
+                        btnAction.BackColor = controlBg;
+                        btnAction.ForeColor = isLightTheme
+                            ? Color.FromArgb(176, 45, 45)
+                            : Color.FromArgb(255, 130, 130);
                     }
                     else if (btnAction.Text.Contains("Aa Font"))
                     {
-                        btnAction.BackColor = isLightTheme ? Color.WhiteSmoke : Color.FromArgb(50, 52, 59);
-                        btnAction.ForeColor = isLightTheme ? Color.Black : Color.White;
+                        btnAction.BackColor = controlBg;
+                        btnAction.ForeColor = textColor;
                     }
                 }
+            }
+        }
+
+        private void BuildSmartImageFinder()
+        {
+            GroupBox grp = new GroupBox
+            {
+                Text = "Smart Image Finder V1.1 (Optional)",
+                Location = new Point(20, 520),
+                Size = new Size(970, 545),
+                Font = new Font("Segoe UI", 11, FontStyle.Bold)
+            };
+
+            Label hint = new Label
+            {
+                Text = "Scanner-ready: scan/type a code and press Enter. Click a preview for the large Image Inspector.",
+                Location = new Point(20, 30), Size = new Size(920, 22), Font = new Font("Segoe UI", 9)
+            };
+
+            Label lp = new Label { Text = "Product Barcode Directory:", Location = new Point(20, 65), AutoSize = true };
+            Label lc = new Label { Text = "Carton Barcode Directory:", Location = new Point(20, 100), AutoSize = true };
+            txtSmartProductFolder = new TextBox { Location = new Point(180,62), Size = new Size(520,27), ReadOnly = true, Text = currentSettings.SmartProductImageFolder ?? "" };
+            txtSmartCartonFolder = new TextBox { Location = new Point(180,97), Size = new Size(520,27), ReadOnly = true, Text = currentSettings.SmartCartonImageFolder ?? "" };
+            Button bp = new Button { Text = "Folder", Location = new Point(710,61), Size = new Size(75,29), FlatStyle = FlatStyle.Flat };
+            Button bc = new Button { Text = "Folder", Location = new Point(710,96), Size = new Size(75,29), FlatStyle = FlatStyle.Flat };
+            btnSmartRefresh = new Button { Text = "↻ Incremental Refresh", Location = new Point(795,61), Size = new Size(155,29), FlatStyle = FlatStyle.Flat };
+            chkSmartMonitor = new CheckBox { Text = "Monitor folders automatically", Location = new Point(795,99), Size = new Size(170,24), Checked = true, Font = new Font("Segoe UI", 8) };
+            lblSmartStatus = new Label { Text = "Scanner ready. " + GetSmartIndexSummary(), Location = new Point(20,132), Size = new Size(930,20), Font = new Font("Segoe UI",8) };
+            lblSmartHealth = new Label { Text = GetSmartHealthSummary(), Location = new Point(20,154), Size = new Size(720,22), Font = new Font("Segoe UI",8,FontStyle.Bold) };
+            Button bfp = new Button { Text = "Product Failures", Location = new Point(755,150), Size = new Size(95,28), FlatStyle = FlatStyle.Flat };
+            Button bfc = new Button { Text = "Carton Failures", Location = new Point(855,150), Size = new Size(95,28), FlatStyle = FlatStyle.Flat };
+
+            GroupBox gp = CreateSmartSearchGroup("Product Barcode / EAN", new Point(20,190), false);
+            GroupBox gc = CreateSmartSearchGroup("Carton SAP Code", new Point(490,190), true);
+
+            bp.Click += (s,e) => SelectSmartFolder(false);
+            bc.Click += (s,e) => SelectSmartFolder(true);
+            btnSmartRefresh.Click += async (s,e) => await RefreshSmartIndexesAsync(false, false);
+            chkSmartMonitor.CheckedChanged += (s,e) => SetupSmartWatchers();
+            bfp.Click += (s,e) => ShowFailures("Product", productImageIndex);
+            bfc.Click += (s,e) => ShowFailures("Carton", cartonImageIndex);
+
+            grp.Controls.AddRange(new Control[] { hint,lp,lc,txtSmartProductFolder,txtSmartCartonFolder,bp,bc,btnSmartRefresh,chkSmartMonitor,lblSmartStatus,lblSmartHealth,bfp,bfc,gp,gc });
+            pageCompose.Controls.Add(grp);
+            pageCompose.AutoScrollMinSize = new Size(0, 1095);
+
+            smartMonitorTimer = new System.Windows.Forms.Timer { Interval = 1800 };
+            smartMonitorTimer.Tick += async (s,e) =>
+            {
+                smartMonitorTimer.Stop();
+                if (!smartRefreshRunning && chkSmartMonitor.Checked)
+                    await RefreshSmartIndexesAsync(false, true);
+            };
+            SetupSmartWatchers();
+        }
+
+        private GroupBox CreateSmartSearchGroup(string title, Point location, bool carton)
+        {
+            GroupBox grp = new GroupBox { Text = title, Location = location, Size = new Size(460,325), Font = new Font("Segoe UI",10,FontStyle.Bold) };
+            TextBox code = new TextBox { Location = new Point(15,32), Size = new Size(280,27), Font = new Font("Consolas",10) };
+            Button find = new Button { Text = carton ? "Find Carton" : "Find Product", Location = new Point(305,31), Size = new Size(135,29), FlatStyle = FlatStyle.Flat };
+            ListBox list = new ListBox { Location = new Point(15,70), Size = new Size(210,205), HorizontalScrollbar = true };
+            PictureBox pic = new PictureBox { Location = new Point(235,70), Size = new Size(205,205), BorderStyle = BorderStyle.FixedSingle, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White, Cursor = Cursors.Hand };
+            Label tip = new Label { Text = "Click preview for large inspector", Location = new Point(235,278), Size = new Size(205,18), TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI",7) };
+            Button add = new Button { Text = carton ? "Add to Carton Lane" : "Add to Product Lane", Location = new Point(235,297), Size = new Size(205,25), FlatStyle = FlatStyle.Flat };
+
+            if (carton) { txtSmartCartonCode = code; lstSmartCartonResults = list; pbSmartCartonPreview = pic; }
+            else { txtSmartProductCode = code; lstSmartProductResults = list; pbSmartProductPreview = pic; }
+
+            find.Click += (s,e) => FindSmartImages(carton ? cartonImageIndex : productImageIndex, code.Text, list, pic, carton ? "Carton" : "Product");
+            code.KeyDown += (s,e) =>
+            {
+                if (e.KeyCode != Keys.Enter) return;
+                e.SuppressKeyPress = true; find.PerformClick(); code.SelectAll(); code.Focus();
+            };
+            list.SelectedIndexChanged += (s,e) => PreviewSmartResult(list,pic);
+            list.DoubleClick += (s,e) => OpenInspector(list,code.Text);
+            pic.Click += (s,e) => OpenInspector(list,code.Text);
+            add.Click += (s,e) => AddSmartResultToLane(list, carton ? pnlCartons : pnlProducts, carton ? "Carton" : "Product");
+
+            grp.Controls.AddRange(new Control[] { code,find,list,pic,tip,add });
+            return grp;
+        }
+
+        private void SelectSmartFolder(bool carton)
+        {
+            string folder = SelectFolderModern();
+            if (string.IsNullOrWhiteSpace(folder)) return;
+            if (carton) { txtSmartCartonFolder.Text = folder; currentSettings.SmartCartonImageFolder = folder; }
+            else { txtSmartProductFolder.Text = folder; currentSettings.SmartProductImageFolder = folder; }
+            SettingsManager.Save(currentSettings);
+            SetupSmartWatchers();
+            lblSmartStatus.Text = (carton ? "Carton" : "Product") + " directory changed. Click Incremental Refresh.";
+        }
+
+        private async System.Threading.Tasks.Task RefreshSmartIndexesAsync(bool forceAll, bool automatic)
+        {
+            if (smartRefreshRunning) return;
+            string pf = txtSmartProductFolder == null ? "" : txtSmartProductFolder.Text;
+            string cf = txtSmartCartonFolder == null ? "" : txtSmartCartonFolder.Text;
+            if (!Directory.Exists(pf) && !Directory.Exists(cf))
+            {
+                if (!automatic) MessageBox.Show("Select at least one valid Product or Carton image directory.", "Smart Image Finder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            smartRefreshRunning = true;
+            btnSmartRefresh.Enabled = false;
+            btnSmartRefresh.Text = automatic ? "Auto refreshing..." : "Refreshing...";
+            try
+            {
+                SmartImageRefreshResult pr = null, cr = null;
+                if (Directory.Exists(pf))
+                    pr = await System.Threading.Tasks.Task.Run(() => productImageIndex.RefreshIncremental(pf, p => ReportProgress("Product",p), forceAll));
+                if (Directory.Exists(cf))
+                    cr = await System.Threading.Tasks.Task.Run(() => cartonImageIndex.RefreshIncremental(cf, p => ReportProgress("Carton",p), forceAll));
+
+                if (Directory.Exists(pf)) currentSettings.SmartProductImageFolder = pf;
+                if (Directory.Exists(cf)) currentSettings.SmartCartonImageFolder = cf;
+                SettingsManager.Save(currentSettings);
+
+                lblSmartStatus.Text = automatic ? "Folder change detected — index updated automatically." :
+                    "Product: " + (pr == null ? "not scanned" : pr.ToString()) + "   |   Carton: " + (cr == null ? "not scanned" : cr.ToString());
+                lblSmartHealth.Text = GetSmartHealthSummary();
+                SetupSmartWatchers();
+            }
+            catch (Exception ex)
+            {
+                lblSmartStatus.Text = "Index refresh failed: " + ex.Message;
+                if (!automatic) MessageBox.Show(ex.Message, "Smart Image Finder Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                smartRefreshRunning = false;
+                btnSmartRefresh.Text = "↻ Incremental Refresh";
+                btnSmartRefresh.Enabled = true;
+            }
+        }
+
+        private void ReportProgress(string type, SmartImageIndexProgress p)
+        {
+            if (p == null || (p.Processed != p.Total && p.Processed % 25 != 0)) return;
+            try
+            {
+                BeginInvoke(new Action(() => lblSmartStatus.Text = string.Format(
+                    "{0}: {1}/{2} checked | {3} unchanged | {4} decoded | {5} failed",
+                    type,p.Processed,p.Total,p.Unchanged,p.Decoded,p.Failed)));
+            }
+            catch { }
+        }
+
+        private string GetSmartIndexSummary()
+        {
+            return string.Format("Product {0} image(s) / {1} code(s) | Carton {2} image(s) / {3} code(s)",
+                productImageIndex.FileCount, productImageIndex.CodeCount, cartonImageIndex.FileCount, cartonImageIndex.CodeCount);
+        }
+
+        private string GetSmartHealthSummary()
+        {
+            return string.Format("Health: Product {0} decoded / {1} failed / {2} duplicate code(s) | Carton {3} decoded / {4} failed / {5} duplicate code(s)",
+                productImageIndex.DecodedFileCount, productImageIndex.FailedFileCount, productImageIndex.DuplicateCodeCount,
+                cartonImageIndex.DecodedFileCount, cartonImageIndex.FailedFileCount, cartonImageIndex.DuplicateCodeCount);
+        }
+
+        private void SetupSmartWatchers()
+        {
+            DisposeWatcher(ref smartProductWatcher); DisposeWatcher(ref smartCartonWatcher);
+            if (chkSmartMonitor == null || !chkSmartMonitor.Checked) return;
+            smartProductWatcher = CreateWatcher(txtSmartProductFolder == null ? "" : txtSmartProductFolder.Text);
+            smartCartonWatcher = CreateWatcher(txtSmartCartonFolder == null ? "" : txtSmartCartonFolder.Text);
+        }
+
+        private FileSystemWatcher CreateWatcher(string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder)) return null;
+            try
+            {
+                FileSystemWatcher w = new FileSystemWatcher(folder)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size
+                };
+                FileSystemEventHandler h = (s,e) => QueueAutoRefresh(e.FullPath);
+                RenamedEventHandler r = (s,e) => QueueAutoRefresh(e.FullPath);
+                w.Created += h; w.Changed += h; w.Deleted += h; w.Renamed += r; w.EnableRaisingEvents = true;
+                return w;
+            }
+            catch { return null; }
+        }
+
+        private void QueueAutoRefresh(string path)
+        {
+            if (!IsSmartImage(path)) return;
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    if (smartMonitorTimer == null) return;
+                    smartMonitorTimer.Stop(); smartMonitorTimer.Start();
+                    lblSmartStatus.Text = "Image-library change detected. Waiting for file copy to finish...";
+                }));
+            }
+            catch { }
+        }
+
+        private bool IsSmartImage(string path)
+        {
+            string e = Path.GetExtension(path ?? "");
+            return e.Equals(".png",StringComparison.OrdinalIgnoreCase) || e.Equals(".jpg",StringComparison.OrdinalIgnoreCase) ||
+                   e.Equals(".jpeg",StringComparison.OrdinalIgnoreCase) || e.Equals(".bmp",StringComparison.OrdinalIgnoreCase) ||
+                   e.Equals(".tif",StringComparison.OrdinalIgnoreCase) || e.Equals(".tiff",StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void DisposeWatcher(ref FileSystemWatcher w)
+        {
+            if (w == null) return;
+            try { w.EnableRaisingEvents = false; w.Dispose(); } catch { }
+            w = null;
+        }
+
+        private void FindSmartImages(SmartImageFinderEngine index, string code, ListBox list, PictureBox preview, string type)
+        {
+            string normalized = SmartImageFinderEngine.NormalizeCode(code);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                MessageBox.Show("Enter or scan a " + type + " barcode / code first.", "Smart Image Finder");
+                return;
+            }
+
+            List<string> matches = index.FindExact(normalized);
+            list.Items.Clear();
+            for (int i=0;i<matches.Count;i++) list.Items.Add(new SmartImageResultItem(matches[i], i==0 && matches.Count>1));
+
+            if (matches.Count == 0)
+            {
+                SetSmartPreviewImage(preview,null);
+                lblSmartStatus.Text = type + " code " + normalized + " was not found.";
+                return;
+            }
+
+            list.SelectedIndex = 0;
+            lblSmartStatus.Text = matches.Count == 1
+                ? type + " exact match found. Click preview to inspect."
+                : "⚠ " + matches.Count + " duplicate/version matches for " + normalized + ". Newest modified image is first.";
+        }
+
+        private void PreviewSmartResult(ListBox list, PictureBox preview)
+        {
+            SmartImageResultItem x = list == null ? null : list.SelectedItem as SmartImageResultItem;
+            SetSmartPreviewImage(preview, x == null ? null : x.FilePath);
+        }
+
+        private void OpenInspector(ListBox list, string code)
+        {
+            SmartImageResultItem x = list == null ? null : list.SelectedItem as SmartImageResultItem;
+            if (x == null || !File.Exists(x.FilePath)) return;
+            using (SmartImageInspectorForm f = new SmartImageInspectorForm(x.FilePath, SmartImageFinderEngine.NormalizeCode(code))) f.ShowDialog(this);
+        }
+
+        private void SetSmartPreviewImage(PictureBox preview, string file)
+        {
+            if (preview == null) return;
+            Image old = preview.Image; preview.Image = null; if (old != null) old.Dispose();
+            if (string.IsNullOrWhiteSpace(file) || !File.Exists(file)) return;
+            try { using (Image i = Image.FromFile(file)) preview.Image = new Bitmap(i); } catch { }
+        }
+
+        private void ShowFailures(string type, SmartImageFinderEngine index)
+        {
+            List<string> failed = index.GetFailedFiles();
+            if (failed.Count == 0) { MessageBox.Show("No failed " + type + " barcode images are currently recorded.", "Index Health"); return; }
+            using (FailedBarcodeInspectorForm f = new FailedBarcodeInspectorForm(type,failed)) f.ShowDialog(this);
+        }
+
+        private void AddSmartResultToLane(ListBox list, FlowLayoutPanel lane, string type)
+        {
+            SmartImageResultItem x = list == null ? null : list.SelectedItem as SmartImageResultItem;
+            if (x == null || !File.Exists(x.FilePath)) { MessageBox.Show("Select a " + type + " search result first.", "Smart Image Finder"); return; }
+            AddThumbnail(lane,x.FilePath);
+            lblSmartStatus.Text = Path.GetFileName(x.FilePath) + " added to the " + type + " lane.";
+
+            if (type == "Product" && txtSmartCartonCode != null) { txtSmartCartonCode.Focus(); txtSmartCartonCode.SelectAll(); }
+            else if (type == "Carton" && txtSmartProductCode != null) { txtSmartProductCode.Focus(); txtSmartProductCode.SelectAll(); }
+        }
+
+        private sealed class SmartImageResultItem
+        {
+            public SmartImageResultItem(string path, bool newest) { FilePath = path; NewestDuplicate = newest; }
+            public string FilePath { get; private set; }
+            public bool NewestDuplicate { get; private set; }
+            public override string ToString()
+            {
+                string d; try { d = File.GetLastWriteTime(FilePath).ToString("yyyy-MM-dd HH:mm"); } catch { d = "unknown date"; }
+                return (NewestDuplicate ? "[NEWEST] " : "") + d + " | " + Path.GetFileName(FilePath);
             }
         }
 
@@ -1112,6 +1585,39 @@ namespace NPPLPrintMaster
             return "";
         }
 
+        private string GetLastLaneFolder(string laneTitle)
+        {
+            string folder = "";
+
+            if (laneTitle.StartsWith("Lane 1", StringComparison.OrdinalIgnoreCase))
+                folder = currentSettings.LastProductFolder;
+            else if (laneTitle.StartsWith("Lane 2", StringComparison.OrdinalIgnoreCase))
+                folder = currentSettings.LastCartonFolder;
+            else if (laneTitle.StartsWith("Lane 3", StringComparison.OrdinalIgnoreCase))
+                folder = currentSettings.LastOtherFolder;
+
+            return !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder)
+                ? folder
+                : "";
+        }
+
+        private void SaveLastLaneFolder(string laneTitle, string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+                return;
+
+            if (laneTitle.StartsWith("Lane 1", StringComparison.OrdinalIgnoreCase))
+                currentSettings.LastProductFolder = folder;
+            else if (laneTitle.StartsWith("Lane 2", StringComparison.OrdinalIgnoreCase))
+                currentSettings.LastCartonFolder = folder;
+            else if (laneTitle.StartsWith("Lane 3", StringComparison.OrdinalIgnoreCase))
+                currentSettings.LastOtherFolder = folder;
+            else
+                return;
+
+            SettingsManager.Save(currentSettings);
+        }
+
         private FlowLayoutPanel CreateLane(string title, int xPos, Panel parent)
         {
             Panel laneWrapper = new Panel { Location = new Point(xPos, 20), Size = new Size(310, 320), BackColor = Color.FromArgb(50, 52, 59) };
@@ -1120,10 +1626,60 @@ namespace NPPLPrintMaster
             Button btnBrowse = new Button { Text = "📂 Browse Files...", Location = new Point(10, 280), Size = new Size(290, 30), Font = new Font("Segoe UI", 9, FontStyle.Bold), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(28, 29, 33), ForeColor = Color.White };
             btnBrowse.FlatAppearance.BorderSize = 0;
 
-            void OpenBrowse(object s, EventArgs e) { using (OpenFileDialog ofd = new OpenFileDialog { Multiselect = true, Filter = "Images|*.jpg;*.png;*.bmp;*.jpeg" }) if (ofd.ShowDialog() == DialogResult.OK) foreach (string f in ofd.FileNames) AddThumbnail(panel, f); }
+            void OpenBrowse(object s, EventArgs e)
+            {
+                using (OpenFileDialog ofd = new OpenFileDialog
+                {
+                    Multiselect = true,
+                    Filter = "Images|*.jpg;*.jpeg;*.png;*.bmp"
+                })
+                {
+                    string lastFolder = GetLastLaneFolder(title);
+
+                    if (!string.IsNullOrWhiteSpace(lastFolder))
+                        ofd.InitialDirectory = lastFolder;
+
+                    if (ofd.ShowDialog() != DialogResult.OK)
+                        return;
+
+                    if (ofd.FileNames.Length > 0)
+                        SaveLastLaneFolder(title, Path.GetDirectoryName(ofd.FileNames[0]));
+
+                    foreach (string f in ofd.FileNames)
+                        AddThumbnail(panel, f);
+                }
+            }
             panel.Click += OpenBrowse; btnBrowse.Click += OpenBrowse;
             panel.DragEnter += (s, e) => { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; };
-            panel.DragDrop += (s, e) => { string[] items = (string[])e.Data.GetData(DataFormats.FileDrop); foreach (string item in items) { if (Directory.Exists(item)) { foreach (string f in Directory.GetFiles(item)) { if (f.EndsWith(".jpg") || f.EndsWith(".png") || f.EndsWith(".bmp")) AddThumbnail(panel, f); } } else { AddThumbnail(panel, item); } } };
+            panel.DragDrop += (s, e) =>
+            {
+                string[] items = (string[])e.Data.GetData(DataFormats.FileDrop);
+
+                foreach (string item in items)
+                {
+                    if (Directory.Exists(item))
+                    {
+                        SaveLastLaneFolder(title, item);
+
+                        foreach (string f in Directory.GetFiles(item))
+                        {
+                            string ext = Path.GetExtension(f);
+                            if (ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                                ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                                ext.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+                                ext.Equals(".bmp", StringComparison.OrdinalIgnoreCase))
+                            {
+                                AddThumbnail(panel, f);
+                            }
+                        }
+                    }
+                    else if (File.Exists(item))
+                    {
+                        SaveLastLaneFolder(title, Path.GetDirectoryName(item));
+                        AddThumbnail(panel, item);
+                    }
+                }
+            };
 
             laneWrapper.Controls.Add(lbl);
             laneWrapper.Controls.Add(panel);
@@ -2143,7 +2699,16 @@ namespace NPPLPrintMaster
 
                 this.Cursor = Cursors.Default;
 
-                JobCardPreviewForm previewForm = new JobCardPreviewForm(previewBitmap, startingItems);
+                // Capture the exact current three-lane workspace used to create this Job Card.
+                WorkspaceData jobCardWorkspace =
+                    BuildCurrentWorkspaceData();
+
+                JobCardPreviewForm previewForm = new JobCardPreviewForm(
+                    previewBitmap,
+                    startingItems,
+                    jobCardWorkspace,
+                    currentSettings,
+                    GetLastJobCardSaveFolder());
 
                 previewForm.FormClosed += (s, ev) =>
                 {
@@ -2160,13 +2725,57 @@ namespace NPPLPrintMaster
             }
         }
 
+        private string GetLastJobCardSaveFolder()
+        {
+            if (!string.IsNullOrWhiteSpace(currentSettings.LastJobCardSaveFolder) &&
+                Directory.Exists(currentSettings.LastJobCardSaveFolder))
+            {
+                return currentSettings.LastJobCardSaveFolder;
+            }
+
+            return "";
+        }
+
+        private string GetNpplStorageFolder()
+        {
+            // Use the exact physical path requested:
+            // C:\Users\<user>\Documents\NPPLPrintMaster
+            string userProfile =
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+            string folder =
+                Path.Combine(userProfile, "Documents", "NPPLPrintMaster");
+
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        private WorkspaceData BuildCurrentWorkspaceData()
+        {
+            return new WorkspaceData
+            {
+                Lane1Files = GetFilesFromLane(pnlProducts),
+                Lane2Files = GetFilesFromLane(pnlCartons),
+                Lane3Files = GetFilesFromLane(pnlOthers),
+                Text1 = txtLane1Text.Text,
+                Text2 = txtLane2Text.Text,
+                ShowText1 = chkShowText1.Checked,
+                ShowText2 = chkShowText2.Checked,
+                Font1 = fontLane1,
+                Font2 = fontLane2,
+                LayoutMemory = new List<string>(customLayoutMemory)
+            };
+        }
+
+
+
         private void SaveWorkspace()
         {
             using (SaveFileDialog sfd = new SaveFileDialog { Filter = "NPPL Project|*.nppl", FileName = "MyProject.nppl" })
             {
                 if (sfd.ShowDialog() == DialogResult.OK)
                 {
-                    WorkspaceData data = new WorkspaceData { Lane1Files = GetFilesFromLane(pnlProducts), Lane2Files = GetFilesFromLane(pnlCartons), Lane3Files = GetFilesFromLane(pnlOthers), Text1 = txtLane1Text.Text, Text2 = txtLane2Text.Text, ShowText1 = chkShowText1.Checked, ShowText2 = chkShowText2.Checked, Font1 = fontLane1, Font2 = fontLane2, LayoutMemory = customLayoutMemory };
+                    WorkspaceData data = BuildCurrentWorkspaceData();
                     WorkspaceEngine.SaveToFile(sfd.FileName, data);
                     Logger.LogAction("WORKSPACE_SAVE", $"Saved to {sfd.FileName}");
                     MessageBox.Show("Workspace and Custom Layout saved successfully!", "Saved");

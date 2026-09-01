@@ -204,7 +204,11 @@ namespace NPPLPrintMaster
         // CONSTRUCTOR
         // ========================================================
 
-        public FreeformBuilderForm(List<CanvasItem> initialItems = null)
+        public FreeformBuilderForm(
+            List<CanvasItem> initialItems = null,
+            WorkspaceData workspaceData = null,
+            AppSettings appSettings = null,
+            string initialSaveDirectory = "")
         {
             Text =
                 "Pro Freeform Builder - NPPL PrintMaster";
@@ -357,10 +361,26 @@ namespace NPPLPrintMaster
                 new object[]
                 {
                     "📋 Quick Text...",
-                    "BARCODE SAMPLE 50 X 38 MM",
-                    "BARCODE SAMPLE 150 X 200 MM",
-                    "PRODUCT BARCODE {W} X {H} MM",
-                    "CARTON BARCODE {W} X {H} MM"
+                    new CustomTextAsset
+                    {
+                        Name = "50 x 38 MM",
+                        Content = "BARCODE SAMPLE 50 X 38 MM"
+                    },
+                    new CustomTextAsset
+                    {
+                        Name = "150 x 200 MM",
+                        Content = "BARCODE SAMPLE 150 X 200 MM"
+                    },
+                    new CustomTextAsset
+                    {
+                        Name = "Product Barcode - Auto Size",
+                        Content = "PRODUCT BARCODE {W} X {H} MM"
+                    },
+                    new CustomTextAsset
+                    {
+                        Name = "Carton Barcode - Auto Size",
+                        Content = "CARTON BARCODE {W} X {H} MM"
+                    }
                 });
 
             cmbTemplate.SelectedIndex = 0;
@@ -550,7 +570,7 @@ namespace NPPLPrintMaster
             // theme's accent color, while all other commands use readable
             // high-contrast text.
             btnSave.ForeColor =
-                builderTheme.ActiveColor;
+                toolbarForeColor;
 
             // ToolStripComboBox hosts a normal ComboBox internally, so its
             // colors must be applied to the hosted control as well.
@@ -770,7 +790,7 @@ namespace NPPLPrintMaster
             GroupBox grpLibrary =
                 new GroupBox
                 {
-                    Text = "2. Saved Text Library",
+                    Text = "2. Saved Quick Text Library",
 
                     ForeColor = Color.White,
 
@@ -812,12 +832,27 @@ namespace NPPLPrintMaster
                             FontStyle.Regular)
                 };
 
+            cmbCustomText.SelectedIndexChanged +=
+                (s, e) =>
+                {
+                    CustomTextAsset asset =
+                        cmbCustomText.SelectedItem
+                        as CustomTextAsset;
+
+                    if (asset != null &&
+                        txtQuickText != null)
+                    {
+                        txtQuickText.Text =
+                            asset.Content ?? string.Empty;
+                    }
+                };
+
             LoadCustomTextDropdown();
 
             Button btnInsertSaved =
                 new Button
                 {
-                    Text = "⬇️ Insert Selected",
+                    Text = "Use Selected Text",
 
                     Location =
                         new Point(15, 70),
@@ -856,7 +891,7 @@ namespace NPPLPrintMaster
             Button btnManageLibrary =
                 new Button
                 {
-                    Text = "⚙️ Manage...",
+                    Text = "➕ Add / Manage...",
 
                     Location =
                         new Point(155, 70),
@@ -1596,6 +1631,10 @@ namespace NPPLPrintMaster
                         ofd.Filter =
                             "NPPL Project|*.nppl";
 
+                        // Loading an NPPL must never change the folder used
+                        // later by Save Final BMP.
+                        ofd.RestoreDirectory = true;
+
                         if (ofd.ShowDialog() !=
                             DialogResult.OK)
                         {
@@ -2057,11 +2096,26 @@ namespace NPPLPrintMaster
                                 item.TextTemplate ??
                                 string.Empty;
 
-                            if (cmbTemplate.Items.Contains(
-                                item.TextTemplate))
+                            object matchingQuickText =
+                                cmbTemplate.Items
+                                    .Cast<object>()
+                                    .FirstOrDefault(
+                                        option =>
+                                        {
+                                            CustomTextAsset asset =
+                                                option as CustomTextAsset;
+
+                                            return asset != null &&
+                                                string.Equals(
+                                                    asset.Content,
+                                                    item.TextTemplate,
+                                                    StringComparison.Ordinal);
+                                        });
+
+                            if (matchingQuickText != null)
                             {
                                 cmbTemplate.SelectedItem =
-                                    item.TextTemplate;
+                                    matchingQuickText;
                             }
                             else
                             {
@@ -2177,10 +2231,13 @@ namespace NPPLPrintMaster
                         return;
                     }
 
+                    object selectedTemplate =
+                        cmbTemplate.SelectedItem;
+
                     string template =
-                        cmbTemplate.SelectedItem
-                            ?.ToString()
-                        ?? string.Empty;
+                        selectedTemplate is CustomTextAsset quickTextAsset
+                            ? quickTextAsset.Content ?? string.Empty
+                            : selectedTemplate?.ToString() ?? string.Empty;
 
                     foreach (
                         CanvasItem item
@@ -3793,6 +3850,48 @@ namespace NPPLPrintMaster
                             sfd.FileName =
                                 "JobCard_Final.bmp";
 
+                            sfd.AddExtension = true;
+                            sfd.DefaultExt = "bmp";
+                            sfd.RestoreDirectory = true;
+
+                            // Re-read the persisted setting at the exact time
+                            // the Save dialog opens. This prevents an earlier
+                            // OpenFileDialog (such as Load .nppl) from becoming
+                            // the apparent save location.
+                            AppSettings latestSettings =
+                                SettingsManager.Load();
+
+                            string rememberedSaveFolder =
+                                initialSaveDirectory;
+
+                            if (latestSettings != null &&
+                                !string.IsNullOrWhiteSpace(
+                                    latestSettings.LastJobCardSaveFolder) &&
+                                Directory.Exists(
+                                    latestSettings.LastJobCardSaveFolder))
+                            {
+                                rememberedSaveFolder =
+                                    latestSettings.LastJobCardSaveFolder;
+                            }
+                            else if (appSettings != null &&
+                                     !string.IsNullOrWhiteSpace(
+                                         appSettings.LastJobCardSaveFolder) &&
+                                     Directory.Exists(
+                                         appSettings.LastJobCardSaveFolder))
+                            {
+                                rememberedSaveFolder =
+                                    appSettings.LastJobCardSaveFolder;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(
+                                    rememberedSaveFolder) &&
+                                Directory.Exists(
+                                    rememberedSaveFolder))
+                            {
+                                sfd.InitialDirectory =
+                                    rememberedSaveFolder;
+                            }
+
                             if (sfd.ShowDialog() ==
                                 DialogResult.OK)
                             {
@@ -3802,9 +3901,154 @@ namespace NPPLPrintMaster
                                         sfd.FileName,
                                         ImageFormat.Bmp);
 
+                                    string savedBmpPath =
+                                        sfd.FileName;
+
+                                    string savedBmpFolder =
+                                        Path.GetDirectoryName(
+                                            savedBmpPath);
+
+                                    // Remember the last final-BMP folder.
+                                    if (appSettings != null &&
+                                        !string.IsNullOrWhiteSpace(
+                                            savedBmpFolder) &&
+                                        Directory.Exists(
+                                            savedBmpFolder))
+                                    {
+                                        appSettings.LastJobCardSaveFolder =
+                                            savedBmpFolder;
+
+                                        SettingsManager.Save(
+                                            appSettings);
+                                    }
+
+                                    // Keep the freshly loaded settings object
+                                    // synchronized too, so this same builder
+                                    // instance remembers the new BMP folder.
+                                    if (latestSettings != null &&
+                                        !string.IsNullOrWhiteSpace(
+                                            savedBmpFolder) &&
+                                        Directory.Exists(
+                                            savedBmpFolder))
+                                    {
+                                        latestSettings.LastJobCardSaveFolder =
+                                            savedBmpFolder;
+
+                                        SettingsManager.Save(
+                                            latestSettings);
+                                    }
+
+                                    // Save the matching NPPL workspace from
+                                    // the same Final BMP command.
+                                    string userProfile =
+                                        Environment.GetFolderPath(
+                                            Environment.SpecialFolder
+                                                .UserProfile);
+
+                                    if (string.IsNullOrWhiteSpace(
+                                            userProfile))
+                                    {
+                                        throw new InvalidOperationException(
+                                            "Windows user profile folder could not be determined.");
+                                    }
+
+                                    string npplFolder =
+                                        Path.Combine(
+                                            userProfile,
+                                            "Documents",
+                                            "NPPLPrintMaster");
+
+                                    Directory.CreateDirectory(
+                                        npplFolder);
+
+                                    string baseName =
+                                        Path.GetFileNameWithoutExtension(
+                                            savedBmpPath);
+
+                                    if (string.IsNullOrWhiteSpace(
+                                            baseName))
+                                    {
+                                        throw new InvalidOperationException(
+                                            "Unable to determine the NPPL workspace filename.");
+                                    }
+
+                                    string npplPath =
+                                        Path.Combine(
+                                            npplFolder,
+                                            baseName + ".nppl");
+
+                                    WorkspaceData dataToSave =
+                                        workspaceData;
+
+                                    // Standalone Freeform Builder can still
+                                    // save an NPPL by recording all current
+                                    // source images when no Quick Job Card
+                                    // workspace was supplied.
+                                    if (dataToSave == null)
+                                    {
+                                        dataToSave =
+                                            new WorkspaceData
+                                            {
+                                                Lane1Files =
+                                                    items
+                                                        .Where(
+                                                            i =>
+                                                                i != null &&
+                                                                !string.IsNullOrWhiteSpace(
+                                                                    i.FilePath))
+                                                        .Select(
+                                                            i => i.FilePath)
+                                                        .Distinct(
+                                                            StringComparer
+                                                                .OrdinalIgnoreCase)
+                                                        .ToList(),
+
+                                                Lane2Files =
+                                                    new List<string>(),
+
+                                                Lane3Files =
+                                                    new List<string>(),
+
+                                                LayoutMemory =
+                                                    new List<string>()
+                                            };
+                                    }
+
+                                    WorkspaceEngine.SaveToFile(
+                                        npplPath,
+                                        dataToSave);
+
+                                    if (!File.Exists(
+                                            npplPath))
+                                    {
+                                        throw new IOException(
+                                            "The NPPL workspace was not created. Expected file:" +
+                                            Environment.NewLine +
+                                            npplPath);
+                                    }
+
+                                    FileInfo npplInfo =
+                                        new FileInfo(
+                                            npplPath);
+
+                                    if (npplInfo.Length <= 0)
+                                    {
+                                        throw new IOException(
+                                            "The NPPL workspace was created but is empty:" +
+                                            Environment.NewLine +
+                                            npplPath);
+                                    }
+
+                                    Logger.LogAction(
+                                        "FREEFORM_NPPL_AUTO_SAVE",
+                                        "BMP: " +
+                                        savedBmpPath +
+                                        " | NPPL: " +
+                                        npplPath);
+
                                     long fileBytes =
                                         new FileInfo(
-                                            sfd.FileName)
+                                            savedBmpPath)
                                             .Length;
 
                                     double fileMb =
@@ -3827,8 +4071,13 @@ namespace NPPLPrintMaster
                                         Environment.NewLine +
                                         "File size: " +
                                         fileMb.ToString("0.0") +
-                                        " MB",
-                                        "Export Complete",
+                                        " MB" +
+                                        Environment.NewLine +
+                                        Environment.NewLine +
+                                        "NPPL workspace:" +
+                                        Environment.NewLine +
+                                        npplPath,
+                                        "Final BMP + NPPL Saved",
                                         MessageBoxButtons.OK,
                                         MessageBoxIcon.Information);
                                 }
@@ -4724,26 +4973,76 @@ namespace NPPLPrintMaster
 
         private void LoadCustomTextDropdown()
         {
-            if (cmbCustomText ==
-                null)
+            List<CustomTextAsset> library =
+                TextLibraryManager.LoadLibrary();
+
+            if (cmbCustomText != null)
             {
-                return;
+                cmbCustomText.Items.Clear();
+
+                foreach (
+                    CustomTextAsset asset
+                    in library)
+                {
+                    cmbCustomText.Items.Add(
+                        asset);
+                }
+
+                if (cmbCustomText.Items.Count >
+                    0)
+                {
+                    cmbCustomText.SelectedIndex =
+                        0;
+                }
             }
 
-            cmbCustomText.Items.Clear();
-
-            foreach (
-                CustomTextAsset asset
-                in TextLibraryManager.LoadLibrary())
+            // Keep the top Quick Text dropdown synchronized with the
+            // user-managed library. The dropdown shows the short Name/Label,
+            // while selecting it applies the full Content.
+            if (cmbTemplate != null)
             {
-                cmbCustomText.Items.Add(
-                    asset);
-            }
+                cmbTemplate.Items.Clear();
 
-            if (cmbCustomText.Items.Count >
-                0)
-            {
-                cmbCustomText.SelectedIndex =
+                cmbTemplate.Items.Add(
+                    "📋 Quick Text...");
+
+                cmbTemplate.Items.Add(
+                    new CustomTextAsset
+                    {
+                        Name = "50 x 38 MM",
+                        Content = "BARCODE SAMPLE 50 X 38 MM"
+                    });
+
+                cmbTemplate.Items.Add(
+                    new CustomTextAsset
+                    {
+                        Name = "150 x 200 MM",
+                        Content = "BARCODE SAMPLE 150 X 200 MM"
+                    });
+
+                cmbTemplate.Items.Add(
+                    new CustomTextAsset
+                    {
+                        Name = "Product Barcode - Auto Size",
+                        Content = "PRODUCT BARCODE {W} X {H} MM"
+                    });
+
+                cmbTemplate.Items.Add(
+                    new CustomTextAsset
+                    {
+                        Name = "Carton Barcode - Auto Size",
+                        Content = "CARTON BARCODE {W} X {H} MM"
+                    });
+
+                foreach (
+                    CustomTextAsset asset
+                    in library)
+                {
+                    cmbTemplate.Items.Add(
+                        asset);
+                }
+
+                cmbTemplate.SelectedIndex =
                     0;
             }
         }
