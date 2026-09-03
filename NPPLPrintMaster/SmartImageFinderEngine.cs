@@ -133,17 +133,34 @@ namespace NPPLPrintMaster
 
                 SmartImageIndexRecord old;
                 bool hasOld = previous.TryGetValue(file, out old);
-                bool unchanged = hasOld && old.FileSize == fi.Length && old.LastWriteTicks == fi.LastWriteTimeUtc.Ticks;
+                bool metadataUnchanged =
+                    hasOld &&
+                    old.FileSize == fi.Length &&
+                    old.LastWriteTicks == fi.LastWriteTimeUtc.Ticks;
+
+                // A failed record is deliberately retried even when its metadata
+                // is unchanged. This recovers from a watcher refresh that arrived
+                // while Windows was still finishing the file copy.
+                bool reuseCached =
+                    metadataUnchanged &&
+                    !old.DecodeFailed;
+
                 SmartImageIndexRecord rec;
 
-                if (unchanged)
+                if (reuseCached)
                 {
                     rec = old;
                     result.UnchangedFiles++;
                 }
                 else
                 {
-                    if (hasOld) result.ChangedFiles++; else result.NewFiles++;
+                    if (!hasOld)
+                        result.NewFiles++;
+                    else if (!metadataUnchanged)
+                        result.ChangedFiles++;
+                    else
+                        result.UnchangedFiles++;
+
                     string value = Decode(file);
                     rec = new SmartImageIndexRecord
                     {

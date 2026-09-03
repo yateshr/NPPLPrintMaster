@@ -24,6 +24,12 @@ namespace NPPLPrintMaster
         {
             DoubleBuffered = true;
             ResizeRedraw = true;
+
+            // The scroll viewport itself owns keyboard/mouse-wheel focus.
+            // This avoids focusing the very large PictureBox child, which
+            // can make WinForms AutoScroll jump toward the canvas origin.
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
@@ -81,6 +87,10 @@ namespace NPPLPrintMaster
 
         private ComboBox cmbCustomText;
         private TextBox txtQuickText;
+        private ToolStripStatusLabel lblOutputInfo;
+        private long lastSavedBmpBytes = -1;
+        private int lastSavedBmpWidth = -1;
+        private int lastSavedBmpHeight = -1;
 
         // ========================================================
         // WORKSPACE
@@ -504,6 +514,25 @@ namespace NPPLPrintMaster
 
             Controls.Add(topToolPanel);
 
+            // Live export information stays visible while arranging/resizing.
+            StatusStrip outputStatusStrip = new StatusStrip
+            {
+                Dock = DockStyle.Bottom,
+                SizingGrip = false,
+                ShowItemToolTips = true
+            };
+
+            lblOutputInfo = new ToolStripStatusLabel
+            {
+                Text = "OUTPUT   No printable image",
+                Spring = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold)
+            };
+
+            outputStatusStrip.Items.Add(lblOutputInfo);
+            Controls.Add(outputStatusStrip);
+
             // ====================================================
             // THEME-AWARE TOOLBAR COLORS
             // ====================================================
@@ -547,6 +576,11 @@ namespace NPPLPrintMaster
 
             topToolPanel.BackColor =
                 toolbarBackColor;
+
+            outputStatusStrip.BackColor = builderTheme.ContentBg;
+            outputStatusStrip.ForeColor = builderTheme.TextColor;
+            lblOutputInfo.BackColor = builderTheme.ContentBg;
+            lblOutputInfo.ForeColor = builderTheme.TextColor;
 
             foreach (ToolStripItem item in toolStrip.Items)
             {
@@ -996,8 +1030,50 @@ namespace NPPLPrintMaster
 
             Controls.Add(pnlTools);
 
+            Action FocusCanvasViewport =
+                () =>
+                {
+                    int keepX =
+                        Math.Abs(
+                            scrollPanel
+                                .AutoScrollPosition
+                                .X);
+
+                    int keepY =
+                        Math.Abs(
+                            scrollPanel
+                                .AutoScrollPosition
+                                .Y);
+
+                    scrollPanel.Focus();
+
+                    int afterX =
+                        Math.Abs(
+                            scrollPanel
+                                .AutoScrollPosition
+                                .X);
+
+                    int afterY =
+                        Math.Abs(
+                            scrollPanel
+                                .AutoScrollPosition
+                                .Y);
+
+                    // Defensive restore: focusing the viewport should not move
+                    // it, but if Windows changes the scroll position, put the
+                    // exact previous view back immediately.
+                    if (afterX != keepX ||
+                        afterY != keepY)
+                    {
+                        scrollPanel.AutoScrollPosition =
+                            new Point(
+                                keepX,
+                                keepY);
+                    }
+                };
+
             pbCanvas.MouseEnter +=
-                (s, e) => pbCanvas.Focus();
+                (s, e) => FocusCanvasViewport();
 
             // ====================================================
             // FIT / CENTER
@@ -2026,6 +2102,8 @@ namespace NPPLPrintMaster
                             marqueePen,
                             rect);
                     }
+
+                    UpdateLiveOutputInfo();
                 };
 
             // ====================================================
@@ -2617,7 +2695,7 @@ namespace NPPLPrintMaster
             pbCanvas.MouseDown +=
                 (s, ev) =>
                 {
-                    pbCanvas.Focus();
+                    FocusCanvasViewport();
 
                     if (isSpaceDown &&
                         ev.Button ==
@@ -3904,6 +3982,19 @@ namespace NPPLPrintMaster
                                     string savedBmpPath =
                                         sfd.FileName;
 
+                                    try
+                                    {
+                                        lastSavedBmpBytes =
+                                            new FileInfo(savedBmpPath).Length;
+                                        lastSavedBmpWidth = finalBmp.Width;
+                                        lastSavedBmpHeight = finalBmp.Height;
+                                        UpdateLiveOutputInfo();
+                                    }
+                                    catch
+                                    {
+                                        lastSavedBmpBytes = -1;
+                                    }
+
                                     string savedBmpFolder =
                                         Path.GetDirectoryName(
                                             savedBmpPath);
@@ -4463,6 +4554,120 @@ namespace NPPLPrintMaster
                 .Replace(
                     "{H}",
                     hMM.ToString());
+        }
+
+        private bool TryGetCurrentExportBounds(
+            out int finalWidth,
+            out int finalHeight)
+        {
+            finalWidth = 0;
+            finalHeight = 0;
+
+            List<CanvasItem> printableItems =
+                items
+                    .Where(ItemIntersectsPage)
+                    .ToList();
+
+            if (printableItems.Count == 0)
+                return false;
+
+            const int padding = 60;
+
+            int minX = printableItems.Min(i => i.X);
+            int minY = printableItems.Min(i => i.Y);
+            int maxX = printableItems.Max(i => i.X + i.Width);
+            int maxY = printableItems.Max(
+                i => i.Y + GetTotalItemHeight(i));
+
+            int cropX = Math.Max(pageX, minX - padding);
+            int cropY = Math.Max(pageY, minY - padding);
+
+            int finalRight = Math.Min(
+                pageX + pageWidth,
+                maxX + padding);
+
+            int finalBottom = Math.Min(
+                pageY + pageHeight,
+                maxY + padding);
+
+            finalWidth = finalRight - cropX;
+            finalHeight = finalBottom - cropY;
+
+            return finalWidth > 0 && finalHeight > 0;
+        }
+
+        private void UpdateLiveOutputInfo()
+        {
+            if (lblOutputInfo == null)
+                return;
+
+            int width;
+            int height;
+
+            if (!TryGetCurrentExportBounds(out width, out height))
+            {
+                lastSavedBmpBytes = -1;
+                lblOutputInfo.Text =
+                    "OUTPUT   No printable image inside white canvas";
+                return;
+            }
+
+            double widthMm =
+                width / (double)ExportDpi * 25.4;
+
+            double heightMm =
+                height / (double)ExportDpi * 25.4;
+
+            // 24-bit BMP rows are aligned to 4-byte boundaries.
+            long stride =
+                ((long)width * 3L + 3L) / 4L * 4L;
+
+            long estimatedBytes =
+                54L + stride * height;
+
+            bool savedSizeMatches =
+                lastSavedBmpBytes >= 0 &&
+                lastSavedBmpWidth == width &&
+                lastSavedBmpHeight == height;
+
+            string sizeText =
+                FormatFileSize(
+                    savedSizeMatches
+                        ? lastSavedBmpBytes
+                        : estimatedBytes);
+
+            string sizeCaption =
+                savedSizeMatches
+                    ? "Saved BMP "
+                    : "Est. BMP ";
+
+            lblOutputInfo.Text =
+                string.Format(
+                    "OUTPUT   {0} × {1} px   |   {2:0} DPI   |   {3:0.0} × {4:0.0} mm   |   {5}{6}",
+                    width,
+                    height,
+                    ExportDpi,
+                    widthMm,
+                    heightMm,
+                    sizeCaption,
+                    sizeText);
+        }
+
+        private static string FormatFileSize(
+            long bytes)
+        {
+            if (bytes < 1024)
+                return bytes + " B";
+
+            double kb = bytes / 1024.0;
+            if (kb < 1024.0)
+                return kb.ToString("0.0") + " KB";
+
+            double mb = kb / 1024.0;
+            if (mb < 1024.0)
+                return mb.ToString("0.0") + " MB";
+
+            return (mb / 1024.0).ToString("0.00") + " GB";
         }
 
         private static int PixelsToMillimeters(

@@ -217,6 +217,7 @@ namespace NPPLPrintMaster
             btnCustomize.Click += (s, e) => {
                 this.Hide();
                 FreeformBuilderForm builder = new FreeformBuilderForm(rawItems, workspaceData, appSettings, initialSaveDirectory);
+                builder.WindowState = FormWindowState.Maximized;
                 builder.ShowDialog();
                 this.Close();
             };
@@ -251,7 +252,7 @@ namespace NPPLPrintMaster
         private TextBox txtSource1, txtExport1;
         private NumericUpDown numDpi;
         private ComboBox cmbFormat;
-        private CheckBox chkSubDirs1, chkPreserveFolders1;
+        private CheckBox chkSubDirs1, chkPreserveFolders1, chkExtractAndFormat;
         private string[] selectedBtwFiles = null;
         private string selectedBtwFolder = "";
 
@@ -291,6 +292,7 @@ namespace NPPLPrintMaster
 
         // Smart Image Finder V1.1
         private TextBox txtSmartProductFolder, txtSmartCartonFolder;
+        private ToolTip smartFolderToolTip;
         private TextBox txtSmartProductCode, txtSmartCartonCode;
         private ListBox lstSmartProductResults, lstSmartCartonResults;
         private PictureBox pbSmartProductPreview, pbSmartCartonPreview;
@@ -299,6 +301,9 @@ namespace NPPLPrintMaster
         private CheckBox chkSmartMonitor;
         private FileSystemWatcher smartProductWatcher, smartCartonWatcher;
         private System.Windows.Forms.Timer smartMonitorTimer;
+        private System.Windows.Forms.Timer smartSafetyTimer;
+        private System.Windows.Forms.Timer smartProductSearchTimer;
+        private System.Windows.Forms.Timer smartCartonSearchTimer;
         private bool smartRefreshRunning;
         private SmartImageFinderEngine productImageIndex = new SmartImageFinderEngine("ProductBarcodes");
         private SmartImageFinderEngine cartonImageIndex = new SmartImageFinderEngine("CartonBarcodes");
@@ -343,6 +348,12 @@ namespace NPPLPrintMaster
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
+            if (smartMonitorTimer != null) smartMonitorTimer.Stop();
+            if (smartSafetyTimer != null) smartSafetyTimer.Stop();
+            if (smartProductSearchTimer != null) smartProductSearchTimer.Stop();
+            if (smartCartonSearchTimer != null) smartCartonSearchTimer.Stop();
+            DisposeWatcher(ref smartProductWatcher);
+            DisposeWatcher(ref smartCartonWatcher);
             Logger.LogAction("APP_EXIT", "NPPLPrintMaster closed safely.");
         }
 
@@ -365,12 +376,12 @@ namespace NPPLPrintMaster
 
             ToolStripMenuItem editMenu = new ToolStripMenuItem("Edit");
             ToolStripMenuItem clearItem = new ToolStripMenuItem("Clear All Images");
-            clearItem.Click += (s, e) => { ClearLane(pnlProducts); ClearLane(pnlCartons); ClearLane(pnlOthers); };
+            clearItem.Click += (s, e) => { ClearAllLanesAndSmartFinder(); };
             editMenu.DropDownItems.Add(clearItem);
 
             ToolStripMenuItem toolsMenu = new ToolStripMenuItem("Tools");
             ToolStripMenuItem standaloneBuilderItem = new ToolStripMenuItem("🎨 Pro Freeform Builder");
-            standaloneBuilderItem.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.Show(); };
+            standaloneBuilderItem.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
             toolsMenu.DropDownItems.Add(standaloneBuilderItem);
 
             ToolStripMenuItem helpMenu = new ToolStripMenuItem("Help");
@@ -494,7 +505,15 @@ namespace NPPLPrintMaster
             numDpi = new NumericUpDown { Location = new Point(235, 127), Size = new Size(70, 27), Minimum = 96, Maximum = 2400, Value = currentSettings.DefaultDpi };
             btnRun1 = new Button { Text = "▶ Extract Images", Location = new Point(430, 90), Size = new Size(330, 50), Font = new Font("Segoe UI", 11, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnRun1.FlatAppearance.BorderSize = 0; btnRun1.Click += BtnRunBlock1_Click;
-            grpStep1.Controls.AddRange(new Control[] { txtSource1, btnSource1Files, btnSource1Folder, chkSubDirs1, chkPreserveFolders1, txtExport1, btnExport1, lblFormat, cmbFormat, lblDpi, numDpi, btnRun1 });
+            chkExtractAndFormat = new CheckBox
+            {
+                Text = "Extract + Format in one task (uses Formatting tab border/output settings)",
+                Location = new Point(315, 145),
+                Size = new Size(445, 24),
+                Font = new Font("Segoe UI", 8.5f),
+                Checked = false
+            };
+            grpStep1.Controls.AddRange(new Control[] { txtSource1, btnSource1Files, btnSource1Folder, chkSubDirs1, chkPreserveFolders1, txtExport1, btnExport1, lblFormat, cmbFormat, lblDpi, numDpi, btnRun1, chkExtractAndFormat });
             pageExtract.Controls.Add(grpStep1);
 
             // ====================================================
@@ -1085,7 +1104,7 @@ namespace NPPLPrintMaster
 
             Button btnClear = new Button { Text = "🗑️ Clear All Lanes", Font = new Font("Segoe UI", 10, FontStyle.Bold), Location = new Point(690, 440), Size = new Size(300, 50), BackColor = Color.FromArgb(28, 29, 33), ForeColor = Color.IndianRed, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
             btnClear.FlatAppearance.BorderSize = 1; btnClear.FlatAppearance.BorderColor = Color.IndianRed;
-            btnClear.Click += (s, e) => { ClearLane(pnlProducts); ClearLane(pnlCartons); ClearLane(pnlOthers); };
+            btnClear.Click += (s, e) => { ClearAllLanesAndSmartFinder(); };
 
             pageCompose.Controls.AddRange(new Control[] { chkShowText1, txtLane1Text, btnFont1, chkShowText2, txtLane2Text, btnFont2, btnRun3, btnClear });
 
@@ -1147,7 +1166,7 @@ namespace NPPLPrintMaster
             navButtons[1].Click += (s, e) => SwitchPage(pageExtract, navButtons[1], "Step 1: BarTender Extraction");
             navButtons[2].Click += (s, e) => SwitchPage(pageFormat, navButtons[2], "Step 2: Image Formatting");
             navButtons[3].Click += (s, e) => SwitchPage(pageCompose, navButtons[3], "Step 3: Quick Job Card");
-            btnNavFreeform.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.Show(); };
+            btnNavFreeform.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
             btnNavSettings.Click += (s, e) => SwitchPage(pageSettings, btnNavSettings, "Application Settings");
 
             SwitchPage(pageHome, navButtons[0], "Dashboard Home");
@@ -1288,7 +1307,7 @@ namespace NPPLPrintMaster
         {
             GroupBox grp = new GroupBox
             {
-                Text = "Smart Image Finder V1.1 (Optional)",
+                Text = "Smart Image Finder V1.2 (Optional)",
                 Location = new Point(20, 520),
                 Size = new Size(970, 545),
                 Font = new Font("Segoe UI", 11, FontStyle.Bold)
@@ -1296,72 +1315,295 @@ namespace NPPLPrintMaster
 
             Label hint = new Label
             {
-                Text = "Scanner-ready: scan/type a code and press Enter. Click a preview for the large Image Inspector.",
-                Location = new Point(20, 30), Size = new Size(920, 22), Font = new Font("Segoe UI", 9)
+                Text = "Scanner-ready: scan or type a code — matching preview appears automatically. Click preview for large inspector.",
+                Location = new Point(20, 30),
+                Size = new Size(920, 22),
+                Font = new Font("Segoe UI", 9)
             };
 
-            Label lp = new Label { Text = "Product Barcode Directory:", Location = new Point(20, 65), AutoSize = true };
-            Label lc = new Label { Text = "Carton Barcode Directory:", Location = new Point(20, 100), AutoSize = true };
-            txtSmartProductFolder = new TextBox { Location = new Point(180,62), Size = new Size(520,27), ReadOnly = true, Text = currentSettings.SmartProductImageFolder ?? "" };
-            txtSmartCartonFolder = new TextBox { Location = new Point(180,97), Size = new Size(520,27), ReadOnly = true, Text = currentSettings.SmartCartonImageFolder ?? "" };
-            Button bp = new Button { Text = "Folder", Location = new Point(710,61), Size = new Size(75,29), FlatStyle = FlatStyle.Flat };
-            Button bc = new Button { Text = "Folder", Location = new Point(710,96), Size = new Size(75,29), FlatStyle = FlatStyle.Flat };
-            btnSmartRefresh = new Button { Text = "↻ Incremental Refresh", Location = new Point(795,61), Size = new Size(155,29), FlatStyle = FlatStyle.Flat };
-            chkSmartMonitor = new CheckBox { Text = "Monitor folders automatically", Location = new Point(795,99), Size = new Size(170,24), Checked = true, Font = new Font("Segoe UI", 8) };
-            lblSmartStatus = new Label { Text = "Scanner ready. " + GetSmartIndexSummary(), Location = new Point(20,132), Size = new Size(930,20), Font = new Font("Segoe UI",8) };
-            lblSmartHealth = new Label { Text = GetSmartHealthSummary(), Location = new Point(20,154), Size = new Size(720,22), Font = new Font("Segoe UI",8,FontStyle.Bold) };
-            Button bfp = new Button { Text = "Product Failures", Location = new Point(755,150), Size = new Size(95,28), FlatStyle = FlatStyle.Flat };
-            Button bfc = new Button { Text = "Carton Failures", Location = new Point(855,150), Size = new Size(95,28), FlatStyle = FlatStyle.Flat };
+            Label lp = new Label
+            {
+                Text = "Product Barcode Directory:",
+                Location = new Point(20, 67),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
+            };
 
-            GroupBox gp = CreateSmartSearchGroup("Product Barcode / EAN", new Point(20,190), false);
-            GroupBox gc = CreateSmartSearchGroup("Carton SAP Code", new Point(490,190), true);
+            Label lc = new Label
+            {
+                Text = "Carton Barcode Directory:",
+                Location = new Point(20, 102),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
+            };
 
-            bp.Click += (s,e) => SelectSmartFolder(false);
-            bc.Click += (s,e) => SelectSmartFolder(true);
-            btnSmartRefresh.Click += async (s,e) => await RefreshSmartIndexesAsync(false, false);
-            chkSmartMonitor.CheckedChanged += (s,e) => SetupSmartWatchers();
-            bfp.Click += (s,e) => ShowFailures("Product", productImageIndex);
-            bfc.Click += (s,e) => ShowFailures("Carton", cartonImageIndex);
+            // Compact read-only path fields. Keep the complete physical path in
+            // Text so indexing/watchers continue using exactly the same value.
+            txtSmartProductFolder = new TextBox
+            {
+                Location = new Point(215, 62),
+                Size = new Size(485, 27),
+                ReadOnly = true,
+                TabStop = false,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Regular),
+                Text = currentSettings.SmartProductImageFolder ?? ""
+            };
 
-            grp.Controls.AddRange(new Control[] { hint,lp,lc,txtSmartProductFolder,txtSmartCartonFolder,bp,bc,btnSmartRefresh,chkSmartMonitor,lblSmartStatus,lblSmartHealth,bfp,bfc,gp,gc });
+            txtSmartCartonFolder = new TextBox
+            {
+                Location = new Point(215, 97),
+                Size = new Size(485, 27),
+                ReadOnly = true,
+                TabStop = false,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Regular),
+                Text = currentSettings.SmartCartonImageFolder ?? ""
+            };
+
+            // Hovering either compact path field reveals the complete directory.
+            smartFolderToolTip = new ToolTip
+            {
+                InitialDelay = 350,
+                ReshowDelay = 100,
+                AutoPopDelay = 12000,
+                ShowAlways = true
+            };
+            smartFolderToolTip.SetToolTip(txtSmartProductFolder, txtSmartProductFolder.Text);
+            smartFolderToolTip.SetToolTip(txtSmartCartonFolder, txtSmartCartonFolder.Text);
+
+            txtSmartProductFolder.TextChanged +=
+                (s, e) => smartFolderToolTip.SetToolTip(
+                    txtSmartProductFolder,
+                    txtSmartProductFolder.Text);
+
+            txtSmartCartonFolder.TextChanged +=
+                (s, e) => smartFolderToolTip.SetToolTip(
+                    txtSmartCartonFolder,
+                    txtSmartCartonFolder.Text);
+            Button bp = new Button { Text = "Folder", Location = new Point(710, 61), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
+            Button bc = new Button { Text = "Folder", Location = new Point(710, 96), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
+            btnSmartRefresh = new Button { Text = "↻ Incremental Refresh", Location = new Point(795, 61), Size = new Size(155, 29), FlatStyle = FlatStyle.Flat };
+            chkSmartMonitor = new CheckBox { Text = "Monitor folders automatically", Location = new Point(795, 99), Size = new Size(170, 24), Checked = true, Font = new Font("Segoe UI", 8) };
+            lblSmartStatus = new Label
+            {
+                Text = "● READY   " + GetSmartIndexSummary(),
+                Location = new Point(20, 132),
+                Size = new Size(930, 20),
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Regular)
+            };
+
+            lblSmartHealth = new Label
+            {
+                Text = GetSmartHealthSummary(),
+                Location = new Point(20, 154),
+                Size = new Size(720, 22),
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold)
+            };
+
+            Button bfp = new Button
+            {
+                Text = "Product Failures",
+                Location = new Point(755, 150),
+                Size = new Size(95, 28),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8)
+            };
+
+            Button bfc = new Button
+            {
+                Text = "Carton Failures",
+                Location = new Point(855, 150),
+                Size = new Size(95, 28),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8)
+            };
+
+            GroupBox gp = CreateSmartSearchGroup("Product Barcode / EAN", new Point(20, 190), false);
+            GroupBox gc = CreateSmartSearchGroup("Carton SAP Code", new Point(490, 190), true);
+
+            bp.Click += (s, e) => SelectSmartFolder(false);
+            bc.Click += (s, e) => SelectSmartFolder(true);
+            btnSmartRefresh.Click += async (s, e) => await RefreshSmartIndexesAsync(false, false);
+            chkSmartMonitor.CheckedChanged += (s, e) => SetupSmartWatchers();
+            bfp.Click += (s, e) => ShowFailures("Product", productImageIndex);
+            bfc.Click += (s, e) => ShowFailures("Carton", cartonImageIndex);
+
+            grp.Controls.AddRange(new Control[] { hint, lp, lc, txtSmartProductFolder, txtSmartCartonFolder, bp, bc, btnSmartRefresh, chkSmartMonitor, lblSmartStatus, lblSmartHealth, bfp, bfc, gp, gc });
             pageCompose.Controls.Add(grp);
             pageCompose.AutoScrollMinSize = new Size(0, 1095);
 
-            smartMonitorTimer = new System.Windows.Forms.Timer { Interval = 1800 };
-            smartMonitorTimer.Tick += async (s,e) =>
+            smartMonitorTimer = new System.Windows.Forms.Timer { Interval = 2500 };
+            smartMonitorTimer.Tick += async (s, e) =>
             {
                 smartMonitorTimer.Stop();
                 if (!smartRefreshRunning && chkSmartMonitor.Checked)
                     await RefreshSmartIndexesAsync(false, true);
             };
+
+            // Safety pass: catches a rare FileSystemWatcher event that Windows
+            // may drop during a burst copy. Unchanged files reuse cached data.
+            smartSafetyTimer = new System.Windows.Forms.Timer { Interval = 45000 };
+            smartSafetyTimer.Tick += async (s, e) =>
+            {
+                if (!smartRefreshRunning && chkSmartMonitor != null && chkSmartMonitor.Checked)
+                    await RefreshSmartIndexesAsync(false, true);
+            };
+            smartSafetyTimer.Start();
             SetupSmartWatchers();
         }
 
         private GroupBox CreateSmartSearchGroup(string title, Point location, bool carton)
         {
-            GroupBox grp = new GroupBox { Text = title, Location = location, Size = new Size(460,325), Font = new Font("Segoe UI",10,FontStyle.Bold) };
-            TextBox code = new TextBox { Location = new Point(15,32), Size = new Size(280,27), Font = new Font("Consolas",10) };
-            Button find = new Button { Text = carton ? "Find Carton" : "Find Product", Location = new Point(305,31), Size = new Size(135,29), FlatStyle = FlatStyle.Flat };
-            ListBox list = new ListBox { Location = new Point(15,70), Size = new Size(210,205), HorizontalScrollbar = true };
-            PictureBox pic = new PictureBox { Location = new Point(235,70), Size = new Size(205,205), BorderStyle = BorderStyle.FixedSingle, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White, Cursor = Cursors.Hand };
-            Label tip = new Label { Text = "Click preview for large inspector", Location = new Point(235,278), Size = new Size(205,18), TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI",7) };
-            Button add = new Button { Text = carton ? "Add to Carton Lane" : "Add to Product Lane", Location = new Point(235,297), Size = new Size(205,25), FlatStyle = FlatStyle.Flat };
+            GroupBox grp = new GroupBox
+            {
+                Text = title,
+                Location = location,
+                Size = new Size(460, 325),
+                Font = new Font("Segoe UI", 10, FontStyle.Bold)
+            };
+
+            // Scanner input is the main interaction point, so give it a little
+            // more visual weight while keeping the existing auto-search logic.
+            TextBox code = new TextBox
+            {
+                Location = new Point(15, 31),
+                Size = new Size(295, 30),
+                Font = new Font("Consolas", 11, FontStyle.Bold)
+            };
+
+            // Manual Find remains available as a compact fallback because
+            // normal scanner/typing searches already happen automatically.
+            Button find = new Button
+            {
+                Text = carton ? "Find Carton" : "Find Product",
+                Location = new Point(320, 31),
+                Size = new Size(120, 30),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
+            };
+
+            ListBox list = new ListBox
+            {
+                Location = new Point(15, 72),
+                Size = new Size(210, 203),
+                HorizontalScrollbar = true,
+                Font = new Font("Segoe UI", 8.5f)
+            };
+
+            PictureBox pic = new PictureBox
+            {
+                Location = new Point(235, 72),
+                Size = new Size(205, 203),
+                BorderStyle = BorderStyle.FixedSingle,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+
+            // A quiet empty-state message makes the preview area feel
+            // intentional instead of looking like an unused white box.
+            pic.Paint += (s, e) =>
+            {
+                PictureBox preview = s as PictureBox;
+                if (preview == null || preview.Image != null) return;
+
+                string emptyText = carton
+                    ? "No Carton Image\r\nScan or enter SAP"
+                    : "No Product Image\r\nScan or enter EAN";
+
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    emptyText,
+                    new Font("Segoe UI", 9, FontStyle.Regular),
+                    preview.ClientRectangle,
+                    Color.DimGray,
+                    TextFormatFlags.HorizontalCenter |
+                    TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.WordBreak);
+            };
+
+            Label tip = new Label
+            {
+                Text = "Click preview for large inspector",
+                Location = new Point(235, 278),
+                Size = new Size(205, 17),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 7.5f)
+            };
+
+            Button add = new Button
+            {
+                Text = carton ? "Add to Carton Lane" : "Add to Product Lane",
+                Location = new Point(235, 296),
+                Size = new Size(205, 27),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
+            };
+
+            if (smartFolderToolTip != null)
+            {
+                smartFolderToolTip.SetToolTip(
+                    code,
+                    carton
+                        ? "Scanner-ready: scan or type Carton SAP code. Search runs automatically."
+                        : "Scanner-ready: scan or type Product EAN. Search runs automatically.");
+
+                smartFolderToolTip.SetToolTip(
+                    find,
+                    "Manual fallback search. Normal typing/scanning searches automatically.");
+            }
 
             if (carton) { txtSmartCartonCode = code; lstSmartCartonResults = list; pbSmartCartonPreview = pic; }
             else { txtSmartProductCode = code; lstSmartProductResults = list; pbSmartProductPreview = pic; }
 
-            find.Click += (s,e) => FindSmartImages(carton ? cartonImageIndex : productImageIndex, code.Text, list, pic, carton ? "Carton" : "Product");
-            code.KeyDown += (s,e) =>
+            SmartImageFinderEngine searchIndex = carton ? cartonImageIndex : productImageIndex;
+            string searchType = carton ? "Carton" : "Product";
+
+            find.Click += (s, e) => FindSmartImages(searchIndex, code.Text, list, pic, searchType);
+
+            System.Windows.Forms.Timer searchTimer = new System.Windows.Forms.Timer { Interval = 300 };
+            searchTimer.Tick += (s, e) =>
+            {
+                searchTimer.Stop();
+                if (!string.IsNullOrWhiteSpace(code.Text))
+                    FindSmartImages(searchIndex, code.Text, list, pic, searchType);
+            };
+
+            if (carton) smartCartonSearchTimer = searchTimer;
+            else smartProductSearchTimer = searchTimer;
+
+            code.TextChanged += (s, e) =>
+            {
+                searchTimer.Stop();
+
+                if (string.IsNullOrWhiteSpace(code.Text))
+                {
+                    ClearSmartSearch(list, pic, searchType);
+                    return;
+                }
+
+                // Short debounce: typing does not search on every key,
+                // while a USB scanner still feels immediate.
+                searchTimer.Start();
+            };
+
+            code.KeyDown += (s, e) =>
             {
                 if (e.KeyCode != Keys.Enter) return;
-                e.SuppressKeyPress = true; find.PerformClick(); code.SelectAll(); code.Focus();
+                e.SuppressKeyPress = true;
+                searchTimer.Stop();
+                if (!string.IsNullOrWhiteSpace(code.Text))
+                    FindSmartImages(searchIndex, code.Text, list, pic, searchType);
+                code.SelectAll();
+                code.Focus();
             };
-            list.SelectedIndexChanged += (s,e) => PreviewSmartResult(list,pic);
-            list.DoubleClick += (s,e) => OpenInspector(list,code.Text);
-            pic.Click += (s,e) => OpenInspector(list,code.Text);
-            add.Click += (s,e) => AddSmartResultToLane(list, carton ? pnlCartons : pnlProducts, carton ? "Carton" : "Product");
+            list.SelectedIndexChanged += (s, e) => PreviewSmartResult(list, pic);
+            list.DoubleClick += (s, e) => OpenInspector(list, code.Text);
+            pic.Click += (s, e) => OpenInspector(list, code.Text);
+            add.Click += (s, e) => AddSmartResultToLane(list, carton ? pnlCartons : pnlProducts, carton ? "Carton" : "Product");
 
-            grp.Controls.AddRange(new Control[] { code,find,list,pic,tip,add });
+            grp.Controls.AddRange(new Control[] { code, find, list, pic, tip, add });
             return grp;
         }
 
@@ -1394,9 +1636,9 @@ namespace NPPLPrintMaster
             {
                 SmartImageRefreshResult pr = null, cr = null;
                 if (Directory.Exists(pf))
-                    pr = await System.Threading.Tasks.Task.Run(() => productImageIndex.RefreshIncremental(pf, p => ReportProgress("Product",p), forceAll));
+                    pr = await System.Threading.Tasks.Task.Run(() => productImageIndex.RefreshIncremental(pf, p => ReportProgress("Product", p), forceAll));
                 if (Directory.Exists(cf))
-                    cr = await System.Threading.Tasks.Task.Run(() => cartonImageIndex.RefreshIncremental(cf, p => ReportProgress("Carton",p), forceAll));
+                    cr = await System.Threading.Tasks.Task.Run(() => cartonImageIndex.RefreshIncremental(cf, p => ReportProgress("Carton", p), forceAll));
 
                 if (Directory.Exists(pf)) currentSettings.SmartProductImageFolder = pf;
                 if (Directory.Exists(cf)) currentSettings.SmartCartonImageFolder = cf;
@@ -1406,6 +1648,31 @@ namespace NPPLPrintMaster
                     "Product: " + (pr == null ? "not scanned" : pr.ToString()) + "   |   Carton: " + (cr == null ? "not scanned" : cr.ToString());
                 lblSmartHealth.Text = GetSmartHealthSummary();
                 SetupSmartWatchers();
+
+                // If a code is already in either search box, immediately re-run
+                // it after an index update so a newly copied image can appear
+                // without the operator touching the search field again.
+                if (txtSmartProductCode != null &&
+                    !string.IsNullOrWhiteSpace(txtSmartProductCode.Text))
+                {
+                    FindSmartImages(
+                        productImageIndex,
+                        txtSmartProductCode.Text,
+                        lstSmartProductResults,
+                        pbSmartProductPreview,
+                        "Product");
+                }
+
+                if (txtSmartCartonCode != null &&
+                    !string.IsNullOrWhiteSpace(txtSmartCartonCode.Text))
+                {
+                    FindSmartImages(
+                        cartonImageIndex,
+                        txtSmartCartonCode.Text,
+                        lstSmartCartonResults,
+                        pbSmartCartonPreview,
+                        "Carton");
+                }
             }
             catch (Exception ex)
             {
@@ -1427,7 +1694,7 @@ namespace NPPLPrintMaster
             {
                 BeginInvoke(new Action(() => lblSmartStatus.Text = string.Format(
                     "{0}: {1}/{2} checked | {3} unchanged | {4} decoded | {5} failed",
-                    type,p.Processed,p.Total,p.Unchanged,p.Decoded,p.Failed)));
+                    type, p.Processed, p.Total, p.Unchanged, p.Decoded, p.Failed)));
             }
             catch { }
         }
@@ -1461,11 +1728,13 @@ namespace NPPLPrintMaster
                 FileSystemWatcher w = new FileSystemWatcher(folder)
                 {
                     IncludeSubdirectories = true,
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                    InternalBufferSize = 64 * 1024
                 };
-                FileSystemEventHandler h = (s,e) => QueueAutoRefresh(e.FullPath);
-                RenamedEventHandler r = (s,e) => QueueAutoRefresh(e.FullPath);
-                w.Created += h; w.Changed += h; w.Deleted += h; w.Renamed += r; w.EnableRaisingEvents = true;
+                FileSystemEventHandler h = (s, e) => QueueAutoRefresh(e.FullPath);
+                RenamedEventHandler r = (s, e) => QueueAutoRefresh(e.FullPath);
+                ErrorEventHandler er = (s, e) => QueueAutoRefresh(folder);
+                w.Created += h; w.Changed += h; w.Deleted += h; w.Renamed += r; w.Error += er; w.EnableRaisingEvents = true;
                 return w;
             }
             catch { return null; }
@@ -1473,7 +1742,12 @@ namespace NPPLPrintMaster
 
         private void QueueAutoRefresh(string path)
         {
-            if (!IsSmartImage(path)) return;
+            // Directory rename/delete events have no image extension, but can
+            // affect many indexed files, so they also trigger the debounce.
+            if (!string.IsNullOrWhiteSpace(path) &&
+                Path.HasExtension(path) &&
+                !IsSmartImage(path))
+                return;
             try
             {
                 BeginInvoke(new Action(() =>
@@ -1489,9 +1763,9 @@ namespace NPPLPrintMaster
         private bool IsSmartImage(string path)
         {
             string e = Path.GetExtension(path ?? "");
-            return e.Equals(".png",StringComparison.OrdinalIgnoreCase) || e.Equals(".jpg",StringComparison.OrdinalIgnoreCase) ||
-                   e.Equals(".jpeg",StringComparison.OrdinalIgnoreCase) || e.Equals(".bmp",StringComparison.OrdinalIgnoreCase) ||
-                   e.Equals(".tif",StringComparison.OrdinalIgnoreCase) || e.Equals(".tiff",StringComparison.OrdinalIgnoreCase);
+            return e.Equals(".png", StringComparison.OrdinalIgnoreCase) || e.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                   e.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) || e.Equals(".bmp", StringComparison.OrdinalIgnoreCase) ||
+                   e.Equals(".tif", StringComparison.OrdinalIgnoreCase) || e.Equals(".tiff", StringComparison.OrdinalIgnoreCase);
         }
 
         private void DisposeWatcher(ref FileSystemWatcher w)
@@ -1501,22 +1775,58 @@ namespace NPPLPrintMaster
             w = null;
         }
 
+        private void ClearSmartSearch(ListBox list, PictureBox preview, string type)
+        {
+            if (list != null)
+            {
+                list.Items.Clear();
+                list.ClearSelected();
+            }
+
+            SetSmartPreviewImage(preview, null);
+
+            if (lblSmartStatus != null)
+                lblSmartStatus.Text = type + " search cleared. Scanner ready.";
+        }
+
+        private void ClearAllLanesAndSmartFinder()
+        {
+            ClearLane(pnlProducts);
+            ClearLane(pnlCartons);
+            ClearLane(pnlOthers);
+
+            if (smartProductSearchTimer != null) smartProductSearchTimer.Stop();
+            if (smartCartonSearchTimer != null) smartCartonSearchTimer.Stop();
+
+            if (txtSmartProductCode != null) txtSmartProductCode.Clear();
+            if (txtSmartCartonCode != null) txtSmartCartonCode.Clear();
+
+            if (lstSmartProductResults != null) lstSmartProductResults.Items.Clear();
+            if (lstSmartCartonResults != null) lstSmartCartonResults.Items.Clear();
+
+            SetSmartPreviewImage(pbSmartProductPreview, null);
+            SetSmartPreviewImage(pbSmartCartonPreview, null);
+
+            if (lblSmartStatus != null)
+                lblSmartStatus.Text = "All lanes and Smart Finder codes cleared. Scanner ready.";
+        }
+
         private void FindSmartImages(SmartImageFinderEngine index, string code, ListBox list, PictureBox preview, string type)
         {
             string normalized = SmartImageFinderEngine.NormalizeCode(code);
             if (string.IsNullOrWhiteSpace(normalized))
             {
-                MessageBox.Show("Enter or scan a " + type + " barcode / code first.", "Smart Image Finder");
+                ClearSmartSearch(list, preview, type);
                 return;
             }
 
             List<string> matches = index.FindExact(normalized);
             list.Items.Clear();
-            for (int i=0;i<matches.Count;i++) list.Items.Add(new SmartImageResultItem(matches[i], i==0 && matches.Count>1));
+            for (int i = 0; i < matches.Count; i++) list.Items.Add(new SmartImageResultItem(matches[i], i == 0 && matches.Count > 1));
 
             if (matches.Count == 0)
             {
-                SetSmartPreviewImage(preview,null);
+                SetSmartPreviewImage(preview, null);
                 lblSmartStatus.Text = type + " code " + normalized + " was not found.";
                 return;
             }
@@ -1552,14 +1862,14 @@ namespace NPPLPrintMaster
         {
             List<string> failed = index.GetFailedFiles();
             if (failed.Count == 0) { MessageBox.Show("No failed " + type + " barcode images are currently recorded.", "Index Health"); return; }
-            using (FailedBarcodeInspectorForm f = new FailedBarcodeInspectorForm(type,failed)) f.ShowDialog(this);
+            using (FailedBarcodeInspectorForm f = new FailedBarcodeInspectorForm(type, failed)) f.ShowDialog(this);
         }
 
         private void AddSmartResultToLane(ListBox list, FlowLayoutPanel lane, string type)
         {
             SmartImageResultItem x = list == null ? null : list.SelectedItem as SmartImageResultItem;
             if (x == null || !File.Exists(x.FilePath)) { MessageBox.Show("Select a " + type + " search result first.", "Smart Image Finder"); return; }
-            AddThumbnail(lane,x.FilePath);
+            AddThumbnail(lane, x.FilePath);
             lblSmartStatus.Text = Path.GetFileName(x.FilePath) + " added to the " + type + " lane.";
 
             if (type == "Product" && txtSmartCartonCode != null) { txtSmartCartonCode.Focus(); txtSmartCartonCode.SelectAll(); }
@@ -2248,17 +2558,36 @@ namespace NPPLPrintMaster
         private async void BtnRunBlock1_Click(object sender, EventArgs e)
         {
             List<string> filesToProcess = new List<string>();
-            if (selectedBtwFiles != null && selectedBtwFiles.Length > 0) filesToProcess.AddRange(selectedBtwFiles);
+            if (selectedBtwFiles != null && selectedBtwFiles.Length > 0)
+                filesToProcess.AddRange(selectedBtwFiles);
             else if (!string.IsNullOrWhiteSpace(selectedBtwFolder) && Directory.Exists(selectedBtwFolder))
             {
-                SearchOption opt = chkSubDirs1.Checked ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                filesToProcess.AddRange(Directory.GetFiles(selectedBtwFolder, "*.btw", opt));
+                SearchOption opt = chkSubDirs1.Checked
+                    ? SearchOption.AllDirectories
+                    : SearchOption.TopDirectoryOnly;
+
+                filesToProcess.AddRange(
+                    Directory.GetFiles(selectedBtwFolder, "*.btw", opt));
             }
 
-            if (filesToProcess.Count == 0 || string.IsNullOrWhiteSpace(txtExport1.Text)) { MessageBox.Show("Please select .btw files and an export folder first."); return; }
+            if (filesToProcess.Count == 0 ||
+                string.IsNullOrWhiteSpace(txtExport1.Text) ||
+                txtExport1.Text.StartsWith("Select ", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("Please select .btw files and an export folder first.");
+                return;
+            }
 
-            btnRun1.Text = "⏳ Extracting... Please Wait...";
+            bool extractAndFormat =
+                chkExtractAndFormat != null &&
+                chkExtractAndFormat.Checked;
+
+            btnRun1.Text = extractAndFormat
+                ? "⏳ Extracting + Formatting..."
+                : "⏳ Extracting... Please Wait...";
             btnRun1.Enabled = false;
+
+            string tempExtractFolder = null;
 
             try
             {
@@ -2267,23 +2596,139 @@ namespace NPPLPrintMaster
                         ? selectedBtwFolder
                         : null;
 
-                int count = await BarTenderEngine.ExtractImages(
+                string extractTarget = txtExport1.Text;
+
+                // One-task mode uses an isolated temporary extraction folder.
+                // This avoids loading and overwriting the same image file during
+                // formatting, and leaves only the final formatted output behind.
+                if (extractAndFormat)
+                {
+                    tempExtractFolder = Path.Combine(
+                        Path.GetTempPath(),
+                        "NPPLPrintMaster",
+                        "ExtractFormat_" + Guid.NewGuid().ToString("N"));
+
+                    Directory.CreateDirectory(tempExtractFolder);
+                    extractTarget = tempExtractFolder;
+                }
+
+                int extractedCount = await BarTenderEngine.ExtractImages(
                     filesToProcess,
-                    txtExport1.Text,
+                    extractTarget,
                     cmbFormat.SelectedItem.ToString(),
                     (int)numDpi.Value,
                     chkPreserveFolders1.Checked,
                     sourceRoot);
 
+                if (!extractAndFormat)
+                {
+                    Logger.LogAction(
+                        "EXTRACT",
+                        $"Extracted {extractedCount} files to {txtExport1.Text}" +
+                        (chkPreserveFolders1.Checked
+                            ? " (folder structure preserved)"
+                            : ""));
+
+                    MessageBox.Show(
+                        $"Step 1 Complete!\nExtracted {extractedCount} images.",
+                        "Success");
+
+                    return;
+                }
+
+                SearchOption tempSearchOption =
+                    chkPreserveFolders1.Checked
+                        ? SearchOption.AllDirectories
+                        : SearchOption.TopDirectoryOnly;
+
+                List<string> extractedImages =
+                    Directory.GetFiles(
+                        tempExtractFolder,
+                        "*.*",
+                        tempSearchOption)
+                    .Where(f =>
+                        f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                        f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                        f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+                        f.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (extractedImages.Count == 0)
+                    throw new InvalidOperationException(
+                        "BarTender extraction completed, but no extracted images were available for formatting.");
+
+                var progressTracker = new Progress<string>(message =>
+                {
+                    if (rtbFormatConsole == null) return;
+                    rtbFormatConsole.AppendText(message);
+                    rtbFormatConsole.ScrollToCaret();
+                });
+
+                if (rtbFormatConsole != null)
+                {
+                    rtbFormatConsole.Clear();
+                    rtbFormatConsole.AppendText(
+                        $"[ONE TASK] Extracted {extractedCount} image(s). Formatting now...\n");
+                    rtbFormatConsole.AppendText(
+                        "--------------------------------------------------\n");
+                }
+
+                int formattedCount = await FormatEngine.FormatImages(
+                    extractedImages,
+                    txtExport1.Text,
+                    chkPadding != null && chkPadding.Checked,
+                    numThickness == null ? 0 : (int)numThickness.Value,
+                    selectedBorderColor,
+                    progressTracker,
+                    chkPreserveFolders1.Checked,
+                    tempExtractFolder,
+                    cmbFormattingOutputFormat != null &&
+                    cmbFormattingOutputFormat.SelectedIndex == 1);
+
+                if (rtbFormatConsole != null)
+                {
+                    rtbFormatConsole.AppendText(
+                        "--------------------------------------------------\n");
+                    rtbFormatConsole.AppendText(
+                        $"[SYSTEM] One-task complete. Final formatted: {formattedCount}\n");
+                }
+
                 Logger.LogAction(
-                    "EXTRACT",
-                    $"Extracted {count} files to {txtExport1.Text}" +
-                    (chkPreserveFolders1.Checked ? " (folder structure preserved)" : ""));
-                MessageBox.Show($"Step 1 Complete!\nExtracted {count} images.", "Success");
+                    "EXTRACT_FORMAT",
+                    $"BTW files: {filesToProcess.Count}; extracted: {extractedCount}; formatted: {formattedCount}; output: {txtExport1.Text}" +
+                    (chkPreserveFolders1.Checked
+                        ? " (folder structure preserved)"
+                        : ""));
+
+                MessageBox.Show(
+                    $"Extract + Format complete!\n\n" +
+                    $"Images extracted: {extractedCount}\n" +
+                    $"Final formatted images: {formattedCount}\n\n" +
+                    $"Output:\n{txtExport1.Text}",
+                    "One Task Complete",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
             }
-            catch (Exception ex) { MessageBox.Show(ex.Message, "Error"); Logger.LogAction("ERROR", ex.Message); }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Error");
+                Logger.LogAction("ERROR", ex.Message);
+            }
             finally
             {
+                if (!string.IsNullOrWhiteSpace(tempExtractFolder) &&
+                    Directory.Exists(tempExtractFolder))
+                {
+                    try
+                    {
+                        Directory.Delete(tempExtractFolder, true);
+                    }
+                    catch
+                    {
+                        // Temporary cleanup must never interrupt production.
+                    }
+                }
+
                 btnRun1.Text = "▶ Extract Images";
                 btnRun1.Enabled = true;
             }
