@@ -61,8 +61,13 @@ namespace NPPLPrintMaster
 
         private const int MinimumItemWidth = 200;
 
-        private const int InitialWorkspaceWidth = 5500;
+        // Large virtual pasteboard. The white export page sits near the
+        // middle and the workbench grows further as the user pans/moves art.
+        private const int InitialWorkspaceWidth = 10000;
         private const int InitialWorkspaceHeight = 10000;
+
+        private const int WorkbenchEdgeBuffer = 1200;
+        private const int WorkbenchGrowBy = 4000;
 
         // ========================================================
         // UI
@@ -107,11 +112,20 @@ namespace NPPLPrintMaster
         private readonly HashSet<Image> ownedImages =
             new HashSet<Image>();
 
+        // Reusable gray-area artwork shelf. Shelf images are copied to
+        // %LOCALAPPDATA%\NPPLPrintMaster\FreeformShelf and restored on
+        // the next Freeform session until Clear Shelf is used.
+        private readonly Dictionary<CanvasItem, FreeformShelfRecord>
+            persistentShelfItems =
+                new Dictionary<CanvasItem, FreeformShelfRecord>();
+
         private int workspaceWidth = InitialWorkspaceWidth;
         private int workspaceHeight = InitialWorkspaceHeight;
 
-        private int pageX = 1000;
-        private int pageY = 1000;
+        // White export page starts as an island in the center of the
+        // initial gray workbench (3500 x 3500 inside 10000 x 10000).
+        private int pageX = 3250;
+        private int pageY = 3250;
 
         private int pageWidth = 3500;
         private int pageHeight = 3500;
@@ -225,6 +239,7 @@ namespace NPPLPrintMaster
 
             Size = new Size(1300, 850);
             StartPosition = FormStartPosition.CenterScreen;
+            WindowState = FormWindowState.Maximized;
 
             KeyPreview = true;
             AllowDrop = true;
@@ -358,6 +373,24 @@ namespace NPPLPrintMaster
             ToolStripSeparator sepCenter =
                 new ToolStripSeparator();
 
+            ToolStripButton btnCenterPage =
+                new ToolStripButton
+                {
+                    Text = "◎ Center Page",
+                    ToolTipText =
+                        "Bring the white export page back to the center without changing zoom.",
+                    ForeColor = Color.White
+                };
+
+            ToolStripButton btnClearShelf =
+                new ToolStripButton
+                {
+                    Text = "🗑 Clear Shelf",
+                    ToolTipText =
+                        "Permanently remove reusable artwork saved in the gray workbench.",
+                    ForeColor = Color.White
+                };
+
             cmbTemplate =
                 new ToolStripComboBox
                 {
@@ -477,7 +510,10 @@ namespace NPPLPrintMaster
                     cmbLayout,
                     btnArrange,
                     sepLayout,
-                    btnFitScreen
+                    btnFitScreen,
+                    sepCenter,
+                    btnCenterPage,
+                    btnClearShelf
                 });
 
             // Formatting / object strip.
@@ -1148,6 +1184,12 @@ namespace NPPLPrintMaster
             btnFitScreen.Click +=
                 (s, e) => CenterViewOnPage();
 
+            btnCenterPage.Click +=
+                (s, e) => CenterExportPageInViewport();
+
+            btnClearShelf.Click +=
+                (s, e) => ClearFreeformShelf();
+
             // Start with true empty undo state.
             SaveUndoState();
 
@@ -1158,7 +1200,15 @@ namespace NPPLPrintMaster
             Action<string> ApplyLayout =
                 mode =>
                 {
-                    if (items.Count == 0)
+                    List<CanvasItem> layoutItems =
+                        items
+                            .Where(
+                                i =>
+                                    i != null &&
+                                    !IsParkedPersistentShelfItem(i))
+                            .ToList();
+
+                    if (layoutItems.Count == 0)
                         return;
 
                     if (mode == "Free Style")
@@ -1193,11 +1243,11 @@ namespace NPPLPrintMaster
                         pageY + pad;
 
                     for (int i = 0;
-                         i < items.Count;
+                         i < layoutItems.Count;
                          i++)
                     {
                         CanvasItem item =
-                            items[i];
+                            layoutItems[i];
 
                         double aspect =
                             item.OriginalAspect;
@@ -1953,27 +2003,35 @@ namespace NPPLPrintMaster
                                 hasPrintableItems =
                                     true;
 
+                                // The green preview boundary is always
+                                // clipped to the white export island.
                                 minX =
                                     Math.Min(
                                         minX,
-                                        item.X);
+                                        Math.Max(
+                                            pageX,
+                                            item.X));
 
                                 minY =
                                     Math.Min(
                                         minY,
-                                        item.Y);
+                                        Math.Max(
+                                            pageY,
+                                            item.Y));
 
                                 maxX =
                                     Math.Max(
                                         maxX,
-                                        item.X +
-                                        item.Width);
+                                        Math.Min(
+                                            pageX + pageWidth,
+                                            item.X + item.Width));
 
                                 maxY =
                                     Math.Max(
                                         maxY,
-                                        item.Y +
-                                        totalItemHeight);
+                                        Math.Min(
+                                            pageY + pageHeight,
+                                            item.Y + totalItemHeight));
                             }
 
                             // Performance:
@@ -2042,19 +2100,41 @@ namespace NPPLPrintMaster
 
                     if (hasPrintableItems)
                     {
-                        g.DrawRectangle(
-                            exportBorderPen,
+                        // Keep the full 12px green stroke inside the
+                        // white page rather than letting half of the pen
+                        // bleed into the gray workbench.
+                        const int exportStrokeInset = 6;
 
-                            minX - 60,
-                            minY - 60,
+                        int exportLeft =
+                            Math.Max(
+                                pageX + exportStrokeInset,
+                                minX - 60);
 
-                            maxX -
-                            minX +
-                            120,
+                        int exportTop =
+                            Math.Max(
+                                pageY + exportStrokeInset,
+                                minY - 60);
 
-                            maxY -
-                            minY +
-                            120);
+                        int exportRight =
+                            Math.Min(
+                                pageX + pageWidth - exportStrokeInset,
+                                maxX + 60);
+
+                        int exportBottom =
+                            Math.Min(
+                                pageY + pageHeight - exportStrokeInset,
+                                maxY + 60);
+
+                        if (exportRight > exportLeft &&
+                            exportBottom > exportTop)
+                        {
+                            g.DrawRectangle(
+                                exportBorderPen,
+                                exportLeft,
+                                exportTop,
+                                exportRight - exportLeft,
+                                exportBottom - exportTop);
+                        }
                     }
 
                     if (isDragging &&
@@ -2969,6 +3049,8 @@ namespace NPPLPrintMaster
                                         currentY -
                                         dy));
 
+                            EnsureInfiniteWorkbench();
+
                             panStartPoint =
                                 currentScreenPos;
                         }
@@ -3336,6 +3418,8 @@ namespace NPPLPrintMaster
                             suppressLayoutEvent =
                                 false;
                         }
+
+                        EnsureInfiniteWorkbench();
                     }
 
                     isDragging =
@@ -3668,6 +3752,8 @@ namespace NPPLPrintMaster
                             suppressLayoutEvent =
                                 false;
                         }
+
+                        EnsureInfiniteWorkbench();
                     }
                 };
 
@@ -4289,6 +4375,9 @@ namespace NPPLPrintMaster
                 }
             }
 
+            LoadFreeformShelf();
+            UpdateWorkspaceExtent();
+            SaveUndoState();
             UpdateToolbar();
         }
 
@@ -4777,24 +4866,52 @@ namespace NPPLPrintMaster
 
         private void UpdateWorkspaceExtent()
         {
-            const int margin =
-                1000;
+            int requiredRight =
+                pageX +
+                pageWidth +
+                WorkbenchEdgeBuffer;
 
+            int requiredBottom =
+                pageY +
+                pageHeight +
+                WorkbenchEdgeBuffer;
+
+            foreach (CanvasItem item in items)
+            {
+                if (item == null)
+                    continue;
+
+                requiredRight =
+                    Math.Max(
+                        requiredRight,
+                        item.X +
+                        item.Width +
+                        WorkbenchEdgeBuffer);
+
+                requiredBottom =
+                    Math.Max(
+                        requiredBottom,
+                        item.Y +
+                        GetTotalItemHeight(item) +
+                        WorkbenchEdgeBuffer);
+            }
+
+            // Never shrink the pasteboard. This is what gives the builder
+            // its effectively infinite workbench behavior while keeping a
+            // finite WinForms control internally.
             workspaceWidth =
                 Math.Max(
-                    InitialWorkspaceWidth,
-
-                    pageX +
-                    pageWidth +
-                    margin);
+                    workspaceWidth,
+                    Math.Max(
+                        InitialWorkspaceWidth,
+                        requiredRight));
 
             workspaceHeight =
                 Math.Max(
-                    InitialWorkspaceHeight,
-
-                    pageY +
-                    pageHeight +
-                    margin);
+                    workspaceHeight,
+                    Math.Max(
+                        InitialWorkspaceHeight,
+                        requiredBottom));
 
             UpdateCanvasPhysicalSize();
         }
@@ -5658,12 +5775,1203 @@ namespace NPPLPrintMaster
         }
 
         // ========================================================
+        // INFINITE WORKBENCH / PERSISTENT FREEFORM SHELF
+        // ========================================================
+
+        private bool IsParkedPersistentShelfItem(
+            CanvasItem item)
+        {
+            return
+                item != null &&
+                !ItemIntersectsPage(item);
+        }
+
+        private string GetFreeformShelfRoot()
+        {
+            string localAppData =
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData);
+
+            return Path.Combine(
+                localAppData,
+                "NPPLPrintMaster",
+                "FreeformShelf");
+        }
+
+        private string GetFreeformShelfImagesFolder()
+        {
+            return Path.Combine(
+                GetFreeformShelfRoot(),
+                "Images");
+        }
+
+        private string GetFreeformShelfMetadataPath()
+        {
+            return Path.Combine(
+                GetFreeformShelfRoot(),
+                "shelf.dat");
+        }
+
+        private static string EncodeShelfText(
+            string value)
+        {
+            return Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(
+                    value ?? string.Empty));
+        }
+
+        private static string DecodeShelfText(
+            string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            return Encoding.UTF8.GetString(
+                Convert.FromBase64String(
+                    value));
+        }
+
+        private static bool IsSupportedShelfImageExtension(
+            string extension)
+        {
+            string ext =
+                (extension ?? string.Empty)
+                    .ToLowerInvariant();
+
+            return
+                ext == ".jpg" ||
+                ext == ".jpeg" ||
+                ext == ".png" ||
+                ext == ".bmp";
+        }
+
+        private static bool SamePath(
+            string a,
+            string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) ||
+                string.IsNullOrWhiteSpace(b))
+            {
+                return false;
+            }
+
+            try
+            {
+                return string.Equals(
+                    Path.GetFullPath(a),
+                    Path.GetFullPath(b),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(
+                    a,
+                    b,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        private void CenterExportPageInViewport()
+        {
+            if (scrollPanel == null ||
+                pbCanvas == null)
+            {
+                return;
+            }
+
+            UpdateWorkspaceExtent();
+
+            int targetX =
+                (int)Math.Round(
+                    (pageX +
+                     pageWidth / 2f) *
+                    zoom);
+
+            int targetY =
+                (int)Math.Round(
+                    (pageY +
+                     pageHeight / 2f) *
+                    zoom);
+
+            int scrollX =
+                targetX -
+                scrollPanel.ClientSize.Width / 2;
+
+            int scrollY =
+                targetY -
+                scrollPanel.ClientSize.Height / 2;
+
+            scrollPanel.AutoScrollPosition =
+                new Point(
+                    Math.Max(
+                        0,
+                        scrollX),
+
+                    Math.Max(
+                        0,
+                        scrollY));
+
+            pbCanvas.Invalidate();
+        }
+
+        private void ShiftLogicalWorkspace(
+            int shiftX,
+            int shiftY)
+        {
+            if (shiftX == 0 &&
+                shiftY == 0)
+            {
+                return;
+            }
+
+            foreach (
+                CanvasItem item
+                in items)
+            {
+                if (item == null)
+                    continue;
+
+                item.X += shiftX;
+                item.Y += shiftY;
+            }
+
+            pageX += shiftX;
+            pageY += shiftY;
+
+            // Undo snapshots use absolute logical coordinates. Keep them
+            // aligned with the page whenever the virtual workbench rebases.
+            foreach (
+                WorkspaceSnapshot snapshot
+                in undoStack)
+            {
+                if (snapshot?.Items == null)
+                    continue;
+
+                foreach (
+                    CanvasItemState state
+                    in snapshot.Items)
+                {
+                    if (state == null)
+                        continue;
+
+                    state.X += shiftX;
+                    state.Y += shiftY;
+                }
+            }
+
+            if (clipboardItems != null)
+            {
+                foreach (
+                    CanvasItemState state
+                    in clipboardItems)
+                {
+                    if (state == null)
+                        continue;
+
+                    state.X += shiftX;
+                    state.Y += shiftY;
+                }
+            }
+        }
+
+        private void EnsureInfiniteWorkbench()
+        {
+            if (scrollPanel == null ||
+                pbCanvas == null ||
+                zoom <= 0)
+            {
+                return;
+            }
+
+            int oldScrollX =
+                Math.Abs(
+                    scrollPanel
+                        .AutoScrollPosition
+                        .X);
+
+            int oldScrollY =
+                Math.Abs(
+                    scrollPanel
+                        .AutoScrollPosition
+                        .Y);
+
+            int logicalViewLeft =
+                (int)Math.Floor(
+                    oldScrollX /
+                    Math.Max(
+                        0.01f,
+                        zoom));
+
+            int logicalViewTop =
+                (int)Math.Floor(
+                    oldScrollY /
+                    Math.Max(
+                        0.01f,
+                        zoom));
+
+            int logicalViewRight =
+                (int)Math.Ceiling(
+                    (oldScrollX +
+                     scrollPanel.ClientSize.Width) /
+                    Math.Max(
+                        0.01f,
+                        zoom));
+
+            int logicalViewBottom =
+                (int)Math.Ceiling(
+                    (oldScrollY +
+                     scrollPanel.ClientSize.Height) /
+                    Math.Max(
+                        0.01f,
+                        zoom));
+
+            int minX =
+                Math.Min(
+                    pageX,
+                    logicalViewLeft);
+
+            int minY =
+                Math.Min(
+                    pageY,
+                    logicalViewTop);
+
+            int maxX =
+                Math.Max(
+                    pageX +
+                    pageWidth,
+                    logicalViewRight);
+
+            int maxY =
+                Math.Max(
+                    pageY +
+                    pageHeight,
+                    logicalViewBottom);
+
+            foreach (
+                CanvasItem item
+                in items)
+            {
+                if (item == null)
+                    continue;
+
+                minX =
+                    Math.Min(
+                        minX,
+                        item.X);
+
+                minY =
+                    Math.Min(
+                        minY,
+                        item.Y);
+
+                maxX =
+                    Math.Max(
+                        maxX,
+                        item.X +
+                        item.Width);
+
+                maxY =
+                    Math.Max(
+                        maxY,
+                        item.Y +
+                        GetTotalItemHeight(
+                            item));
+            }
+
+            int shiftX =
+                minX <
+                WorkbenchEdgeBuffer
+                    ? WorkbenchGrowBy
+                    : 0;
+
+            int shiftY =
+                minY <
+                WorkbenchEdgeBuffer
+                    ? WorkbenchGrowBy
+                    : 0;
+
+            if (shiftX > 0 ||
+                shiftY > 0)
+            {
+                ShiftLogicalWorkspace(
+                    shiftX,
+                    shiftY);
+
+                workspaceWidth +=
+                    shiftX;
+
+                workspaceHeight +=
+                    shiftY;
+
+                maxX += shiftX;
+                maxY += shiftY;
+
+                oldScrollX +=
+                    (int)Math.Round(
+                        shiftX *
+                        zoom);
+
+                oldScrollY +=
+                    (int)Math.Round(
+                        shiftY *
+                        zoom);
+            }
+
+            if (maxX >
+                workspaceWidth -
+                WorkbenchEdgeBuffer)
+            {
+                workspaceWidth =
+                    Math.Max(
+                        workspaceWidth +
+                        WorkbenchGrowBy,
+
+                        maxX +
+                        WorkbenchGrowBy);
+            }
+
+            if (maxY >
+                workspaceHeight -
+                WorkbenchEdgeBuffer)
+            {
+                workspaceHeight =
+                    Math.Max(
+                        workspaceHeight +
+                        WorkbenchGrowBy,
+
+                        maxY +
+                        WorkbenchGrowBy);
+            }
+
+            UpdateCanvasPhysicalSize();
+
+            if (shiftX > 0 ||
+                shiftY > 0)
+            {
+                scrollPanel.AutoScrollPosition =
+                    new Point(
+                        Math.Max(
+                            0,
+                            oldScrollX),
+
+                        Math.Max(
+                            0,
+                            oldScrollY));
+            }
+
+            pbCanvas.Invalidate();
+        }
+
+        private Bitmap LoadShelfDisplayBitmap(
+            string path)
+        {
+            using (
+                Image orig =
+                    Image.FromFile(
+                        path))
+            {
+                int dispW =
+                    Math.Max(
+                        1,
+                        orig.Width);
+
+                int dispH =
+                    Math.Max(
+                        1,
+                        orig.Height);
+
+                const int maxDisplayDim =
+                    1200;
+
+                if (dispW >
+                        maxDisplayDim ||
+                    dispH >
+                        maxDisplayDim)
+                {
+                    double scale =
+                        Math.Min(
+                            (double)maxDisplayDim /
+                            dispW,
+
+                            (double)maxDisplayDim /
+                            dispH);
+
+                    dispW =
+                        Math.Max(
+                            1,
+                            (int)Math.Round(
+                                dispW *
+                                scale));
+
+                    dispH =
+                        Math.Max(
+                            1,
+                            (int)Math.Round(
+                                dispH *
+                                scale));
+                }
+
+                Bitmap displayBmp =
+                    new Bitmap(
+                        dispW,
+                        dispH,
+                        PixelFormat
+                            .Format32bppPArgb);
+
+                using (
+                    Graphics g =
+                        Graphics.FromImage(
+                            displayBmp))
+                {
+                    g.Clear(
+                        Color.White);
+
+                    g.InterpolationMode =
+                        InterpolationMode.Low;
+
+                    g.PixelOffsetMode =
+                        PixelOffsetMode.HighSpeed;
+
+                    g.DrawImage(
+                        orig,
+                        0,
+                        0,
+                        dispW,
+                        dispH);
+                }
+
+                return displayBmp;
+            }
+        }
+
+        private void LoadFreeformShelf()
+        {
+            string metadataPath =
+                GetFreeformShelfMetadataPath();
+
+            string imagesFolder =
+                GetFreeformShelfImagesFolder();
+
+            if (!File.Exists(
+                    metadataPath))
+            {
+                return;
+            }
+
+            string[] lines;
+
+            try
+            {
+                lines =
+                    File.ReadAllLines(
+                        metadataPath,
+                        Encoding.UTF8);
+            }
+            catch
+            {
+                return;
+            }
+
+            foreach (
+                string line
+                in lines)
+            {
+                if (string.IsNullOrWhiteSpace(
+                    line))
+                {
+                    continue;
+                }
+
+                string[] parts =
+                    line.Split('|');
+
+                if (parts.Length != 11 ||
+                    parts[0] != "v1")
+                {
+                    continue;
+                }
+
+                try
+                {
+                    string cacheFileName =
+                        DecodeShelfText(
+                            parts[1]);
+
+                    string cachedPath =
+                        Path.Combine(
+                            imagesFolder,
+                            cacheFileName);
+
+                    if (!File.Exists(
+                            cachedPath))
+                    {
+                        continue;
+                    }
+
+                    int offsetX;
+                    int offsetY;
+                    int width;
+                    int height;
+                    int rotation;
+                    int showTextValue;
+                    int fontStyleValue;
+
+                    if (!int.TryParse(
+                            parts[2],
+                            out offsetX) ||
+                        !int.TryParse(
+                            parts[3],
+                            out offsetY) ||
+                        !int.TryParse(
+                            parts[4],
+                            out width) ||
+                        !int.TryParse(
+                            parts[5],
+                            out height) ||
+                        !int.TryParse(
+                            parts[6],
+                            out rotation) ||
+                        !int.TryParse(
+                            parts[7],
+                            out showTextValue) ||
+                        !int.TryParse(
+                            parts[10],
+                            out fontStyleValue))
+                    {
+                        continue;
+                    }
+
+                    string textTemplate =
+                        DecodeShelfText(
+                            parts[8]);
+
+                    string fontName =
+                        DecodeShelfText(
+                            parts[9]);
+
+                    if (string.IsNullOrWhiteSpace(
+                            fontName))
+                    {
+                        fontName =
+                            "Calibri";
+                    }
+
+                    Bitmap displayBmp =
+                        LoadShelfDisplayBitmap(
+                            cachedPath);
+
+                    CanvasItem item =
+                        new CanvasItem
+                        {
+                            FilePath =
+                                cachedPath,
+
+                            Img =
+                                displayBmp,
+
+                            X =
+                                pageX +
+                                offsetX,
+
+                            Y =
+                                pageY +
+                                offsetY,
+
+                            Width =
+                                Math.Max(
+                                    1,
+                                    width),
+
+                            Height =
+                                Math.Max(
+                                    1,
+                                    height),
+
+                            OriginalAspect =
+                                GetSafeAspect(
+                                    width,
+                                    height),
+
+                            TextTemplate =
+                                textTemplate,
+
+                            ShowText =
+                                showTextValue != 0,
+
+                            Rotation =
+                                NormalizeRotation(
+                                    rotation),
+
+                            ItemFont =
+                                CreateFontSafe(
+                                    fontName,
+                                    14f,
+                                    (FontStyle)fontStyleValue)
+                        };
+
+                    FreeformShelfRecord record =
+                        new FreeformShelfRecord
+                        {
+                            CacheFileName =
+                                cacheFileName,
+
+                            OffsetX =
+                                offsetX,
+
+                            OffsetY =
+                                offsetY,
+
+                            Width =
+                                item.Width,
+
+                            Height =
+                                item.Height,
+
+                            Rotation =
+                                item.Rotation,
+
+                            ShowText =
+                                item.ShowText,
+
+                            TextTemplate =
+                                item.TextTemplate,
+
+                            FontName =
+                                fontName,
+
+                            FontStyle =
+                                (FontStyle)fontStyleValue
+                        };
+
+                    ownedImages.Add(
+                        displayBmp);
+
+                    items.Add(
+                        item);
+
+                    persistentShelfItems[item] =
+                        record;
+                }
+                catch
+                {
+                    // One bad shelf item must not prevent the rest from
+                    // loading or stop the Freeform Builder from opening.
+                }
+            }
+
+            UpdateWorkspaceExtent();
+        }
+
+        private FreeformShelfRecord FindShelfRecordByCachedPath(
+            string filePath,
+            IEnumerable<FreeformShelfRecord> records)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    filePath) ||
+                records == null)
+            {
+                return null;
+            }
+
+            string imagesFolder =
+                GetFreeformShelfImagesFolder();
+
+            foreach (
+                FreeformShelfRecord record
+                in records)
+            {
+                if (record == null ||
+                    string.IsNullOrWhiteSpace(
+                        record.CacheFileName))
+                {
+                    continue;
+                }
+
+                string cachedPath =
+                    Path.Combine(
+                        imagesFolder,
+                        record.CacheFileName);
+
+                if (SamePath(
+                    filePath,
+                    cachedPath))
+                {
+                    return record;
+                }
+            }
+
+            return null;
+        }
+
+        private void UpdateShelfRecordFromItem(
+            FreeformShelfRecord record,
+            CanvasItem item)
+        {
+            if (record == null ||
+                item == null)
+            {
+                return;
+            }
+
+            record.OffsetX =
+                item.X -
+                pageX;
+
+            record.OffsetY =
+                item.Y -
+                pageY;
+
+            record.Width =
+                Math.Max(
+                    1,
+                    item.Width);
+
+            record.Height =
+                Math.Max(
+                    1,
+                    item.Height);
+
+            record.Rotation =
+                NormalizeRotation(
+                    item.Rotation);
+
+            record.ShowText =
+                item.ShowText;
+
+            record.TextTemplate =
+                item.TextTemplate ??
+                string.Empty;
+
+            if (item.ItemFont != null)
+            {
+                record.FontName =
+                    item.ItemFont
+                        .FontFamily
+                        .Name;
+
+                record.FontStyle =
+                    item.ItemFont.Style;
+            }
+
+            if (!string.IsNullOrWhiteSpace(
+                    item.FilePath) &&
+                File.Exists(
+                    item.FilePath))
+            {
+                record.SourcePath =
+                    item.FilePath;
+            }
+
+            record.LiveImage =
+                item.Img;
+        }
+
+        private void EnsureShelfCacheFile(
+            FreeformShelfRecord record,
+            string imagesFolder)
+        {
+            if (record == null)
+                return;
+
+            Directory.CreateDirectory(
+                imagesFolder);
+
+            string existingCachePath =
+                string.IsNullOrWhiteSpace(
+                    record.CacheFileName)
+                    ? string.Empty
+                    : Path.Combine(
+                        imagesFolder,
+                        record.CacheFileName);
+
+            if (!string.IsNullOrWhiteSpace(
+                    existingCachePath) &&
+                File.Exists(
+                    existingCachePath))
+            {
+                return;
+            }
+
+            string sourcePath =
+                record.SourcePath;
+
+            string extension =
+                !string.IsNullOrWhiteSpace(
+                    sourcePath)
+                    ? Path.GetExtension(
+                        sourcePath)
+                    : string.Empty;
+
+            bool canCopySource =
+                !string.IsNullOrWhiteSpace(
+                    sourcePath) &&
+                File.Exists(
+                    sourcePath) &&
+                IsSupportedShelfImageExtension(
+                    extension);
+
+            if (!canCopySource)
+            {
+                extension =
+                    ".png";
+            }
+
+            record.CacheFileName =
+                Guid.NewGuid()
+                    .ToString("N") +
+                extension.ToLowerInvariant();
+
+            string destination =
+                Path.Combine(
+                    imagesFolder,
+                    record.CacheFileName);
+
+            if (canCopySource)
+            {
+                File.Copy(
+                    sourcePath,
+                    destination,
+                    true);
+
+                return;
+            }
+
+            if (record.LiveImage == null)
+            {
+                throw new InvalidOperationException(
+                    "Shelf artwork no longer has a readable source image.");
+            }
+
+            record.LiveImage.Save(
+                destination,
+                ImageFormat.Png);
+        }
+
+        private void SaveFreeformShelf()
+        {
+            string root =
+                GetFreeformShelfRoot();
+
+            string imagesFolder =
+                GetFreeformShelfImagesFolder();
+
+            Directory.CreateDirectory(
+                root);
+
+            Directory.CreateDirectory(
+                imagesFolder);
+
+            List<FreeformShelfRecord> records =
+                persistentShelfItems
+                    .Values
+                    .Where(
+                        r => r != null)
+                    .Distinct()
+                    .ToList();
+
+            // Loaded shelf items remain persistent even if they were dragged
+            // into the white page or deleted from this particular session.
+            // If they are still parked in gray, remember their new parking
+            // position and size.
+            foreach (
+                KeyValuePair<CanvasItem, FreeformShelfRecord> pair
+                in persistentShelfItems.ToList())
+            {
+                CanvasItem item =
+                    pair.Key;
+
+                FreeformShelfRecord record =
+                    pair.Value;
+
+                if (item != null &&
+                    items.Contains(
+                        item) &&
+                    !ItemIntersectsPage(
+                        item))
+                {
+                    UpdateShelfRecordFromItem(
+                        record,
+                        item);
+                }
+            }
+
+            // Any ordinary image the user parks completely in gray becomes
+            // a reusable shelf item automatically.
+            foreach (
+                CanvasItem item
+                in items)
+            {
+                if (item == null ||
+                    item.Img == null ||
+                    ItemIntersectsPage(
+                        item))
+                {
+                    continue;
+                }
+
+                FreeformShelfRecord existing =
+                    persistentShelfItems
+                        .ContainsKey(
+                            item)
+                            ? persistentShelfItems[item]
+                            : FindShelfRecordByCachedPath(
+                                item.FilePath,
+                                records);
+
+                if (existing != null)
+                {
+                    UpdateShelfRecordFromItem(
+                        existing,
+                        item);
+
+                    if (!records.Contains(
+                            existing))
+                    {
+                        records.Add(
+                            existing);
+                    }
+
+                    continue;
+                }
+
+                FreeformShelfRecord record =
+                    new FreeformShelfRecord();
+
+                UpdateShelfRecordFromItem(
+                    record,
+                    item);
+
+                records.Add(
+                    record);
+            }
+
+            // Do not create an empty metadata file if there is no shelf.
+            if (records.Count == 0)
+            {
+                string emptyMetadata =
+                    GetFreeformShelfMetadataPath();
+
+                if (File.Exists(
+                        emptyMetadata))
+                {
+                    try
+                    {
+                        File.Delete(
+                            emptyMetadata);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                return;
+            }
+
+            List<string> lines =
+                new List<string>();
+
+            foreach (
+                FreeformShelfRecord record
+                in records)
+            {
+                try
+                {
+                    EnsureShelfCacheFile(
+                        record,
+                        imagesFolder);
+
+                    if (string.IsNullOrWhiteSpace(
+                            record.CacheFileName))
+                    {
+                        continue;
+                    }
+
+                    lines.Add(
+                        "v1|" +
+                        EncodeShelfText(
+                            record.CacheFileName) +
+                        "|" +
+                        record.OffsetX +
+                        "|" +
+                        record.OffsetY +
+                        "|" +
+                        Math.Max(
+                            1,
+                            record.Width) +
+                        "|" +
+                        Math.Max(
+                            1,
+                            record.Height) +
+                        "|" +
+                        NormalizeRotation(
+                            record.Rotation) +
+                        "|" +
+                        (record.ShowText
+                            ? "1"
+                            : "0") +
+                        "|" +
+                        EncodeShelfText(
+                            record.TextTemplate) +
+                        "|" +
+                        EncodeShelfText(
+                            string.IsNullOrWhiteSpace(
+                                record.FontName)
+                                ? "Calibri"
+                                : record.FontName) +
+                        "|" +
+                        (int)record.FontStyle);
+                }
+                catch
+                {
+                    // Skip only the item that could not be cached.
+                }
+            }
+
+            if (lines.Count == 0)
+                return;
+
+            string metadataPath =
+                GetFreeformShelfMetadataPath();
+
+            string tempMetadata =
+                metadataPath +
+                ".tmp";
+
+            File.WriteAllLines(
+                tempMetadata,
+                lines.ToArray(),
+                Encoding.UTF8);
+
+            File.Copy(
+                tempMetadata,
+                metadataPath,
+                true);
+
+            try
+            {
+                File.Delete(
+                    tempMetadata);
+            }
+            catch
+            {
+            }
+        }
+
+        private void ClearFreeformShelf()
+        {
+            DialogResult result =
+                MessageBox.Show(
+                    "Clear all reusable artwork from the gray Freeform Shelf?" +
+                    Environment.NewLine +
+                    Environment.NewLine +
+                    "This deletes only NPPLPrintMaster's saved shelf cache." +
+                    Environment.NewLine +
+                    "Your original image files are not deleted.",
+
+                    "Clear Freeform Shelf",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+
+            if (result !=
+                DialogResult.Yes)
+            {
+                return;
+            }
+
+            List<CanvasItem> grayItems =
+                items
+                    .Where(
+                        i =>
+                            i != null &&
+                            !ItemIntersectsPage(i))
+                    .ToList();
+
+            foreach (
+                CanvasItem item
+                in grayItems)
+            {
+                selectedItems.Remove(
+                    item);
+
+                items.Remove(
+                    item);
+
+                DisposeItemFont(
+                    item);
+            }
+
+            persistentShelfItems.Clear();
+
+            string root =
+                GetFreeformShelfRoot();
+
+            try
+            {
+                if (Directory.Exists(
+                        root))
+                {
+                    Directory.Delete(
+                        root,
+                        true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "The shelf was cleared from this session, but Windows could not remove the cache folder." +
+                    Environment.NewLine +
+                    Environment.NewLine +
+                    ex.Message,
+
+                    "Freeform Shelf",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+
+            SaveUndoState();
+            UpdateWorkspaceExtent();
+            pbCanvas.Invalidate();
+        }
+
+        private sealed class FreeformShelfRecord
+        {
+            public string CacheFileName { get; set; }
+            public string SourcePath { get; set; }
+            public Image LiveImage { get; set; }
+
+            public int OffsetX { get; set; }
+            public int OffsetY { get; set; }
+
+            public int Width { get; set; }
+            public int Height { get; set; }
+
+            public int Rotation { get; set; }
+
+            public bool ShowText { get; set; }
+
+            public string TextTemplate { get; set; }
+
+            public string FontName { get; set; }
+
+            public FontStyle FontStyle { get; set; }
+        }
+
+        // ========================================================
         // CLEANUP
         // ========================================================
 
         protected override void OnFormClosed(
             FormClosedEventArgs e)
         {
+            try
+            {
+                SaveFreeformShelf();
+            }
+            catch
+            {
+                // Shelf persistence must never block application shutdown.
+            }
+
             DisposeCurrentItemFonts();
 
             foreach (
