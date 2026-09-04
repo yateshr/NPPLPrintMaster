@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -144,6 +144,13 @@ namespace NPPLPrintMaster
 
         private bool didDragMove;
         private bool didResizeMove;
+
+        // CTRL + left-drag duplication state. The duplicate is not
+        // created until the normal drag threshold has been crossed,
+        // so an ordinary Ctrl+click keeps its multi-selection behavior.
+        private bool duplicateDragPending;
+        private CanvasItem ctrlClickItem;
+        private bool ctrlClickItemWasSelected;
 
         // Prevents a normal click / tiny touchpad jitter from being
         // treated as an intentional drag.
@@ -582,8 +589,14 @@ namespace NPPLPrintMaster
                 ThemeManager.GetTheme(
                     builderSettings.Theme);
 
+            bool useBarTender10Classic =
+                ThemeManager.IsBarTender10Classic(
+                    builderSettings.Theme);
+
             Color toolbarBackColor =
-                builderTheme.SidebarColor;
+                useBarTender10Classic
+                    ? Color.FromArgb(190, 211, 238)
+                    : builderTheme.SidebarColor;
 
             // Use a guaranteed high-contrast foreground for the toolbar
             // itself. Some themes intentionally use black TextColor for
@@ -594,9 +607,11 @@ namespace NPPLPrintMaster
                 (toolbarBackColor.B * 0.114);
 
             Color toolbarForeColor =
-                toolbarBrightness < 150
-                    ? Color.White
-                    : Color.Black;
+                useBarTender10Classic
+                    ? Color.FromArgb(18, 18, 18)
+                    : toolbarBrightness < 150
+                        ? Color.White
+                        : Color.Black;
 
             toolStrip.BackColor =
                 toolbarBackColor;
@@ -613,10 +628,16 @@ namespace NPPLPrintMaster
             topToolPanel.BackColor =
                 toolbarBackColor;
 
-            outputStatusStrip.BackColor = builderTheme.ContentBg;
-            outputStatusStrip.ForeColor = builderTheme.TextColor;
-            lblOutputInfo.BackColor = builderTheme.ContentBg;
-            lblOutputInfo.ForeColor = builderTheme.TextColor;
+            outputStatusStrip.BackColor =
+                useBarTender10Classic
+                    ? Color.FromArgb(232, 240, 249)
+                    : builderTheme.ContentBg;
+            outputStatusStrip.ForeColor =
+                useBarTender10Classic
+                    ? Color.FromArgb(18, 18, 18)
+                    : builderTheme.TextColor;
+            lblOutputInfo.BackColor = outputStatusStrip.BackColor;
+            lblOutputInfo.ForeColor = outputStatusStrip.ForeColor;
 
             foreach (ToolStripItem item in toolStrip.Items)
             {
@@ -704,7 +725,9 @@ namespace NPPLPrintMaster
                     Width = 320,
 
                     BackColor =
-                        Color.FromArgb(28, 29, 33),
+                        useBarTender10Classic
+                            ? Color.FromArgb(61, 83, 112)
+                            : Color.FromArgb(28, 29, 33),
 
                     Padding = new Padding(15)
                 };
@@ -721,7 +744,9 @@ namespace NPPLPrintMaster
                             FontStyle.Bold),
 
                     ForeColor =
-                        Color.FromArgb(252, 213, 53),
+                        useBarTender10Classic
+                            ? Color.White
+                            : Color.FromArgb(252, 213, 53),
 
                     AutoSize = false,
                     Width = 290,
@@ -772,9 +797,14 @@ namespace NPPLPrintMaster
                         ScrollBars.Vertical,
 
                     BackColor =
-                        Color.FromArgb(50, 52, 59),
+                        useBarTender10Classic
+                            ? Color.FromArgb(245, 248, 252)
+                            : Color.FromArgb(50, 52, 59),
 
-                    ForeColor = Color.White,
+                    ForeColor =
+                        useBarTender10Classic
+                            ? Color.Black
+                            : Color.White,
 
                     BorderStyle =
                         BorderStyle.FixedSingle,
@@ -799,7 +829,9 @@ namespace NPPLPrintMaster
                         new Size(270, 35),
 
                     BackColor =
-                        Color.FromArgb(252, 213, 53),
+                        useBarTender10Classic
+                            ? Color.FromArgb(232, 240, 249)
+                            : Color.FromArgb(252, 213, 53),
 
                     ForeColor = Color.Black,
 
@@ -1008,7 +1040,9 @@ namespace NPPLPrintMaster
                         DockStyle.Fill,
 
                     BackColor =
-                        Color.FromArgb(38, 40, 46)
+                        useBarTender10Classic
+                            ? Color.FromArgb(82, 112, 149)
+                            : Color.FromArgb(38, 40, 46)
                 };
 
             scrollPanel =
@@ -1020,7 +1054,9 @@ namespace NPPLPrintMaster
                     AutoScroll = true,
 
                     BackColor =
-                        Color.DarkGray,
+                        useBarTender10Classic
+                            ? Color.FromArgb(82, 112, 149)
+                            : Color.DarkGray,
 
                     AllowDrop = true
                 };
@@ -1029,7 +1065,9 @@ namespace NPPLPrintMaster
                 new PictureBox
                 {
                     BackColor =
-                        Color.FromArgb(70, 72, 79),
+                        useBarTender10Classic
+                            ? Color.FromArgb(91, 122, 163)
+                            : Color.FromArgb(70, 72, 79),
 
                     Location =
                         new Point(0, 0),
@@ -1061,10 +1099,57 @@ namespace NPPLPrintMaster
                     Width = 3,
 
                     BackColor =
-                        Color.FromArgb(252, 213, 53)
+                        useBarTender10Classic
+                            ? Color.FromArgb(111, 153, 202)
+                            : Color.FromArgb(252, 213, 53)
                 });
 
             Controls.Add(pnlTools);
+
+            if (useBarTender10Classic)
+            {
+                // BarTender editor-like left-side chrome. Visual only.
+                pnlTools.ForeColor = Color.White;
+
+                foreach (Control toolControl in pnlTools.Controls)
+                {
+                    GroupBox group = toolControl as GroupBox;
+                    if (group != null)
+                    {
+                        group.BackColor = Color.FromArgb(70, 94, 126);
+                        group.ForeColor = Color.White;
+
+                        foreach (Control child in group.Controls)
+                        {
+                            Button button = child as Button;
+                            if (button != null)
+                            {
+                                button.FlatStyle = FlatStyle.Flat;
+                                button.BackColor = Color.FromArgb(232, 240, 249);
+                                button.ForeColor = Color.FromArgb(18, 18, 18);
+                                button.FlatAppearance.BorderSize = 1;
+                                button.FlatAppearance.BorderColor =
+                                    Color.FromArgb(128, 151, 179);
+                            }
+
+                            ComboBox combo = child as ComboBox;
+                            if (combo != null)
+                            {
+                                combo.BackColor = Color.White;
+                                combo.ForeColor = Color.Black;
+                            }
+                        }
+                    }
+                }
+
+                // Keep the quick text field light like a classic editor field.
+                txtQuickText.BackColor = Color.White;
+                txtQuickText.ForeColor = Color.Black;
+
+                // Give the pale toolbar a thin classic separator.
+                toolStrip.RenderMode = ToolStripRenderMode.System;
+                formatToolStrip.RenderMode = ToolStripRenderMode.System;
+            }
 
             Action FocusCanvasViewport =
                 () =>
@@ -1734,7 +1819,9 @@ namespace NPPLPrintMaster
                         ofd.Filter =
                             "Images|*.jpg;*.jpeg;*.png;*.bmp";
 
-                        if (ofd.ShowDialog() ==
+                        if (DialogMemoryManager.ShowOpenDialog(
+                            ofd,
+                            "Freeform.AddImages") ==
                             DialogResult.OK)
                         {
                             await ImportFilesAsync(
@@ -1761,7 +1848,9 @@ namespace NPPLPrintMaster
                         // later by Save Final BMP.
                         ofd.RestoreDirectory = true;
 
-                        if (ofd.ShowDialog() !=
+                        if (DialogMemoryManager.ShowOpenDialog(
+                            ofd,
+                            "Freeform.LoadNppl") !=
                             DialogResult.OK)
                         {
                             return;
@@ -2866,24 +2955,45 @@ namespace NPPLPrintMaster
                             return;
                         }
 
-                        if ((Control.ModifierKeys &
+                        bool controlDown =
+                            (Control.ModifierKeys &
                              Keys.Control) !=
-                            0)
+                            0;
+
+                        if (controlDown)
                         {
-                            if (selectedItems.Contains(
-                                clickedItem))
-                            {
-                                selectedItems.Remove(
+                            ctrlClickItem =
+                                clickedItem;
+
+                            ctrlClickItemWasSelected =
+                                selectedItems.Contains(
                                     clickedItem);
-                            }
-                            else
+
+                            // Do not remove an already-selected object yet.
+                            // If the pointer crosses the drag threshold,
+                            // Ctrl+drag must duplicate that selection.
+                            // If it remains a click, MouseUp performs the
+                            // original Ctrl+click toggle behavior.
+                            if (!ctrlClickItemWasSelected)
                             {
                                 selectedItems.Add(
                                     clickedItem);
                             }
+
+                            duplicateDragPending =
+                                true;
                         }
                         else
                         {
+                            duplicateDragPending =
+                                false;
+
+                            ctrlClickItem =
+                                null;
+
+                            ctrlClickItemWasSelected =
+                                false;
+
                             if (!selectedItems.Contains(
                                 clickedItem))
                             {
@@ -2913,6 +3023,15 @@ namespace NPPLPrintMaster
                     }
                     else
                     {
+                        duplicateDragPending =
+                            false;
+
+                        ctrlClickItem =
+                            null;
+
+                        ctrlClickItemWasSelected =
+                            false;
+
                         if ((Control.ModifierKeys &
                              Keys.Control) ==
                             0)
@@ -3117,6 +3236,29 @@ namespace NPPLPrintMaster
                                 thresholdSquared)
                             {
                                 return;
+                            }
+
+                            // CTRL + left-drag duplicates the current
+                            // selection exactly once when a real drag starts.
+                            // The originals stay where they are and only the
+                            // newly-created copies continue with the drag.
+                            if (duplicateDragPending)
+                            {
+                                List<CanvasItem> duplicates =
+                                    DuplicateCanvasItems(
+                                        selectedItems,
+                                        0,
+                                        0);
+
+                                if (duplicates.Count >
+                                    0)
+                                {
+                                    selectedItems =
+                                        duplicates;
+                                }
+
+                                duplicateDragPending =
+                                    false;
                             }
 
                             // Start the drag from the current point instead
@@ -3393,6 +3535,20 @@ namespace NPPLPrintMaster
                         UpdateToolbar();
                     }
 
+                    // If Ctrl was only clicked (not dragged), retain the
+                    // previous Ctrl+click toggle behavior. An item that was
+                    // already selected is deselected on MouseUp.
+                    if (duplicateDragPending &&
+                        !didDragMove &&
+                        ctrlClickItem != null &&
+                        ctrlClickItemWasSelected)
+                    {
+                        selectedItems.Remove(
+                            ctrlClickItem);
+
+                        UpdateToolbar();
+                    }
+
                     bool geometryChanged =
                         didDragMove ||
                         didResizeMove;
@@ -3436,6 +3592,15 @@ namespace NPPLPrintMaster
 
                     dragStartPhysical =
                         Point.Empty;
+
+                    duplicateDragPending =
+                        false;
+
+                    ctrlClickItem =
+                        null;
+
+                    ctrlClickItemWasSelected =
+                        false;
 
                     snapLineX =
                         null;
@@ -3508,6 +3673,42 @@ namespace NPPLPrintMaster
 
                         UpdateToolbar();
                         pbCanvas.Invalidate();
+
+                        ev.Handled =
+                            true;
+
+                        ev.SuppressKeyPress =
+                            true;
+
+                        return;
+                    }
+
+                    // CTRL+D = DUPLICATE SELECTION
+                    if (ev.Control &&
+                        ev.KeyCode ==
+                        Keys.D)
+                    {
+                        if (selectedItems.Count >
+                            0)
+                        {
+                            List<CanvasItem> duplicates =
+                                DuplicateCanvasItems(
+                                    selectedItems,
+                                    15,
+                                    15);
+
+                            if (duplicates.Count >
+                                0)
+                            {
+                                selectedItems =
+                                    duplicates;
+
+                                SaveUndoState();
+                                UpdateToolbar();
+                                EnsureInfiniteWorkbench();
+                                pbCanvas.Invalidate();
+                            }
+                        }
 
                         ev.Handled =
                             true;
@@ -4056,7 +4257,7 @@ namespace NPPLPrintMaster
                                     rememberedSaveFolder;
                             }
 
-                            if (sfd.ShowDialog() ==
+                            if (DialogMemoryManager.ShowSaveDialog(sfd, "Freeform.SaveFinalBmp") ==
                                 DialogResult.OK)
                             {
                                 try
@@ -4948,6 +5149,58 @@ namespace NPPLPrintMaster
         // Images remain immutable and shared.
         // Snapshot stores only state/metadata.
         // ========================================================
+
+        // ========================================================
+        // DUPLICATION
+        // ========================================================
+
+        /// <summary>
+        /// Creates independent CanvasItem objects while intentionally sharing
+        /// the underlying source Image reference. This matches copy/paste
+        /// behavior and avoids multiplying large image allocations.
+        /// Font objects are recreated for each duplicate.
+        /// </summary>
+        private List<CanvasItem> DuplicateCanvasItems(
+            IEnumerable<CanvasItem> sourceItems,
+            int offsetX,
+            int offsetY)
+        {
+            List<CanvasItem> duplicates =
+                new List<CanvasItem>();
+
+            if (sourceItems == null)
+            {
+                return duplicates;
+            }
+
+            // Materialize first because callers may pass selectedItems and
+            // replace that collection immediately after this method returns.
+            foreach (
+                CanvasItem source
+                in sourceItems
+                    .Where(item => item != null)
+                    .ToList())
+            {
+                CanvasItem duplicate =
+                    CanvasItemState
+                        .FromItem(source)
+                        .ToCanvasItem();
+
+                duplicate.X +=
+                    offsetX;
+
+                duplicate.Y +=
+                    offsetY;
+
+                items.Add(
+                    duplicate);
+
+                duplicates.Add(
+                    duplicate);
+            }
+
+            return duplicates;
+        }
 
         private void SaveUndoState()
         {

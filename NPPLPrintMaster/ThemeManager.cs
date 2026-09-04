@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -30,6 +30,7 @@ namespace NPPLPrintMaster
             "Soft Slate",
             "Forest Graphite",
             "BarTender Blue",
+            "BarTender 10 Classic",
             "SAP Classic"
         };
 
@@ -121,6 +122,30 @@ namespace NPPLPrintMaster
                     };
 
                 // ------------------------------------------------
+                // BARTENDER 10 CLASSIC
+                // Inspired by the BarTender 10.0 SR1 / Windows-classic
+                // production UI: pale blue chrome, blue-gray workspace,
+                // white controls, thin cool-gray borders and dark text.
+                // ------------------------------------------------
+                case "BarTender 10 Classic":
+                    return new ThemeColors
+                    {
+                        // BarTender 10 SR1-inspired profile:
+                        // pale classic chrome + darker desaturated editor/workspace.
+                        SidebarColor = Color.FromArgb(82, 112, 149),
+                        SidebarHover = Color.FromArgb(98, 132, 171),
+                        ActiveColor = Color.FromArgb(62, 126, 190),
+                        BgLight = Color.FromArgb(151, 176, 207),
+                        ContentBg = Color.FromArgb(216, 230, 245),
+                        TextColor = Color.FromArgb(18, 18, 18),
+                        ControlBg = Color.FromArgb(248, 250, 252),
+                        MutedTextColor = Color.FromArgb(70, 87, 108),
+                        BorderColor = Color.FromArgb(118, 146, 180),
+                        ReadOnlyBg = Color.FromArgb(231, 238, 246),
+                        ButtonHover = Color.FromArgb(219, 230, 242)
+                    };
+
+                // ------------------------------------------------
                 // SAP CLASSIC
                 // Classic enterprise blue-gray / steel workspace.
                 // ------------------------------------------------
@@ -142,7 +167,7 @@ namespace NPPLPrintMaster
 
                 default:
                     // Old saved theme names automatically fall back safely.
-                    return GetTheme("Midnight Dark");
+                    return GetTheme("Forest Graphite");
             }
         }
 
@@ -275,6 +300,14 @@ namespace NPPLPrintMaster
                 btn.FlatAppearance.MouseDownBackColor =
                     Blend(t.ButtonHover, t.ActiveColor, 0.15f);
             }
+        }
+
+        public static bool IsBarTender10Classic(string themeName)
+        {
+            return string.Equals(
+                themeName,
+                "BarTender 10 Classic",
+                StringComparison.OrdinalIgnoreCase);
         }
 
         public static bool IsLight(Color color)

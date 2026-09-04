@@ -122,14 +122,37 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AppearanceManager.cs" />
     <Compile Include="BarTenderEngine.cs" />
     <Compile Include="BtwListReader.cs" />
     <Compile Include="CanvasItem.cs" />
+    <Compile Include="DialogMemoryManager.cs" />
+    <Compile Include="Form1.Appearance.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.Collage.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Form1.Extraction.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.Formatting.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.JobCard.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.SmartFinder.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.Workspace.cs">
+      <SubType>Form</SubType>
     </Compile>
     <Compile Include="FormatEngine.cs" />
     <Compile Include="FreeformBuilderForm.cs">

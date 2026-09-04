@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -28,9 +28,21 @@ namespace NPPLPrintMaster
             this.Text = "Job Card Preview - NPPL PrintMaster";
             this.Size = new Size(900, 750);
             this.StartPosition = FormStartPosition.CenterParent;
-            this.BackColor = Color.FromArgb(38, 40, 46);
-            this.ForeColor = Color.White;
+            bool useBarTender10Classic =
+                appSettings != null &&
+                ThemeManager.IsBarTender10Classic(appSettings.Theme);
 
+            ThemeColors previewTheme =
+                useBarTender10Classic
+                    ? ThemeManager.GetTheme("BarTender 10 Classic")
+                    : null;
+
+            this.BackColor = useBarTender10Classic
+                ? previewTheme.BgLight
+                : Color.FromArgb(38, 40, 46);
+            this.ForeColor = useBarTender10Classic
+                ? previewTheme.TextColor
+                : Color.White;
             previewBmp = generatedBmp;
             rawItems = itemsForBuilder;
 
@@ -38,7 +50,9 @@ namespace NPPLPrintMaster
             {
                 Dock = DockStyle.Fill,
                 SizeMode = PictureBoxSizeMode.Zoom,
-                BackColor = Color.FromArgb(50, 52, 59),
+                BackColor = useBarTender10Classic
+                    ? Color.FromArgb(96, 127, 167)
+                    : Color.FromArgb(50, 52, 59),
                 Image = previewBmp
             };
 
@@ -46,7 +60,9 @@ namespace NPPLPrintMaster
             {
                 Dock = DockStyle.Bottom,
                 Height = 60,
-                BackColor = Color.FromArgb(28, 29, 33),
+                BackColor = useBarTender10Classic
+                    ? previewTheme.ContentBg
+                    : Color.FromArgb(28, 29, 33),
                 Padding = new Padding(10)
             };
 
@@ -235,6 +251,26 @@ namespace NPPLPrintMaster
             btnClose.FlatAppearance.BorderSize = 0;
             btnClose.Click += (s, e) => this.Close();
 
+            if (useBarTender10Classic)
+            {
+                foreach (Button previewButton in new[] { btnSave, btnCustomize, btnClose })
+                {
+                    previewButton.FlatStyle = FlatStyle.Flat;
+                    previewButton.FlatAppearance.BorderSize = 1;
+                    previewButton.FlatAppearance.BorderColor = previewTheme.BorderColor;
+                }
+
+                btnSave.BackColor = previewTheme.ControlBg;
+                btnSave.ForeColor = previewTheme.TextColor;
+
+                btnCustomize.BackColor = previewTheme.ActiveColor;
+                btnCustomize.ForeColor =
+                    ThemeManager.GetContrastTextColor(previewTheme.ActiveColor);
+
+                btnClose.BackColor = previewTheme.ControlBg;
+                btnClose.ForeColor = previewTheme.TextColor;
+            }
+
             pnlBottom.Controls.AddRange(new Control[] { btnSave, btnCustomize, btnClose });
             this.Controls.Add(pbPreview);
             this.Controls.Add(pnlBottom);
@@ -308,7 +344,7 @@ namespace NPPLPrintMaster
         private SmartImageFinderEngine productImageIndex = new SmartImageFinderEngine("ProductBarcodes");
         private SmartImageFinderEngine cartonImageIndex = new SmartImageFinderEngine("CartonBarcodes");
 
-        private CheckBox chkShowText1, chkShowText2;
+        private CheckBox chkShowText1, chkShowText2, chkOpenDirectFreeform;
         private Font fontLane1 = new Font("Calibri", 14, FontStyle.Bold);
         private Font fontLane2 = new Font("Calibri", 14, FontStyle.Bold);
 
@@ -322,7 +358,8 @@ namespace NPPLPrintMaster
         private Splitter sidebarSplitter;
         private MenuStrip menuBar;
 
-        private ComboBox cmbTheme;
+        private ComboBox cmbTheme, cmbTypography, cmbLayout;
+        private Label lblAppearanceResolved;
         private TextBox txtDefExport1, txtDefExport2;
         private NumericUpDown numDefDpi;
         private Button btnRun1;
@@ -342,6 +379,15 @@ namespace NPPLPrintMaster
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            currentSettings.Theme =
+                AppearanceManager.NormalizeTheme(currentSettings.Theme);
+            currentSettings.TypographyStyle =
+                AppearanceManager.NormalizeTypographyChoice(
+                    currentSettings.TypographyStyle);
+            currentSettings.LayoutStyle =
+                AppearanceManager.NormalizeLayoutChoice(
+                    currentSettings.LayoutStyle);
+
             ApplyTheme(currentSettings.Theme);
             Logger.LogAction("APP_START", "NPPLPrintMaster Enterprise Edition launched.");
         }
@@ -483,9 +529,27 @@ namespace NPPLPrintMaster
             GroupBox grpStep1 = new GroupBox { Text = "BarTender Auto-Extractor", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(850, 175) };
             txtSource1 = new TextBox { Location = new Point(20, 40), Size = new Size(245, 27), ReadOnly = true, Text = "Select .btw Files or Folder..." };
             Button btnSource1Files = new Button { Text = "Files", Location = new Point(270, 39), Size = new Size(60, 29), FlatStyle = FlatStyle.Flat };
-            btnSource1Files.Click += (s, e) => { using (OpenFileDialog ofd = new OpenFileDialog { Multiselect = true, Filter = "BarTender Files (*.btw)|*.btw" }) { if (ofd.ShowDialog() == DialogResult.OK) { selectedBtwFiles = ofd.FileNames; selectedBtwFolder = ""; txtSource1.Text = $"{selectedBtwFiles.Length} .btw file(s) selected"; } } };
+            btnSource1Files.Click += (s, e) =>
+            {
+                using (OpenFileDialog ofd = new OpenFileDialog
+                {
+                    Multiselect = true,
+                    Filter = "BarTender Files (*.btw)|*.btw"
+                })
+                {
+                    if (DialogMemoryManager.ShowOpenDialog(
+                        ofd,
+                        "Extraction.SourceFiles") == DialogResult.OK)
+                    {
+                        selectedBtwFiles = ofd.FileNames;
+                        selectedBtwFolder = "";
+                        txtSource1.Text =
+                            $"{selectedBtwFiles.Length} .btw file(s) selected";
+                    }
+                }
+            };
             Button btnSource1Folder = new Button { Text = "Folder", Location = new Point(335, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
-            btnSource1Folder.Click += (s, e) => { string folder = SelectFolderModern(); if (!string.IsNullOrEmpty(folder)) { selectedBtwFolder = folder; selectedBtwFiles = null; txtSource1.Text = folder; } };
+            btnSource1Folder.Click += (s, e) => { string folder = SelectFolderModern("Extraction.SourceFolder"); if (!string.IsNullOrEmpty(folder)) { selectedBtwFolder = folder; selectedBtwFiles = null; txtSource1.Text = folder; } };
             chkSubDirs1 = new CheckBox { Text = "Include Sub-directories", Location = new Point(20, 75), AutoSize = true, Font = new Font("Segoe UI", 10) };
             chkPreserveFolders1 = new CheckBox
             {
@@ -497,7 +561,7 @@ namespace NPPLPrintMaster
             };
             txtExport1 = new TextBox { Location = new Point(430, 40), Size = new Size(250, 27), ReadOnly = true, Text = string.IsNullOrEmpty(currentSettings.DefaultExport1) ? "Select Output Folder..." : currentSettings.DefaultExport1 };
             Button btnExport1 = new Button { Text = "Browse", Location = new Point(690, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
-            btnExport1.Click += (s, e) => { string f = SelectFolderModern(); if (!string.IsNullOrEmpty(f)) txtExport1.Text = f; };
+            btnExport1.Click += (s, e) => { string f = SelectFolderModern("Extraction.OutputFolder"); if (!string.IsNullOrEmpty(f)) txtExport1.Text = f; };
             Label lblFormat = new Label { Text = "Format:", Location = new Point(20, 130), AutoSize = true, Font = new Font("Segoe UI", 10) };
             cmbFormat = new ComboBox { Location = new Point(85, 127), Size = new Size(80, 28), DropDownStyle = ComboBoxStyle.DropDownList };
             cmbFormat.Items.AddRange(new object[] { "jpg", "png", "bmp" }); cmbFormat.SelectedIndex = 0;
@@ -552,7 +616,7 @@ namespace NPPLPrintMaster
             };
             btnFindMasterBrowse.Click += (s, e) =>
             {
-                string folder = SelectFolderModern();
+                string folder = SelectFolderModern("FindExtract.MasterBtwFolder");
                 if (!string.IsNullOrWhiteSpace(folder))
                 {
                     txtFindMasterFolder.Text = folder;
@@ -665,7 +729,7 @@ namespace NPPLPrintMaster
             };
             btnFindOutputBrowse.Click += (s, e) =>
             {
-                string folder = SelectFolderModern();
+                string folder = SelectFolderModern("FindExtract.OutputFolder");
                 if (!string.IsNullOrWhiteSpace(folder))
                     txtFindOutput.Text = folder;
             };
@@ -748,9 +812,27 @@ namespace NPPLPrintMaster
             GroupBox grpStep2 = new GroupBox { Text = "Image Formatting Engine", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(850, 205) };
             txtSource2 = new TextBox { Location = new Point(20, 40), Size = new Size(245, 27), ReadOnly = true, Text = "Select Images or Folder..." };
             Button btnSource2Files = new Button { Text = "Files", Location = new Point(270, 39), Size = new Size(60, 29), FlatStyle = FlatStyle.Flat };
-            btnSource2Files.Click += (s, e) => { using (OpenFileDialog ofd = new OpenFileDialog { Multiselect = true, Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp" }) { if (ofd.ShowDialog() == DialogResult.OK) { selectedRawFiles = ofd.FileNames; selectedRawFolder = ""; txtSource2.Text = $"{selectedRawFiles.Length} image(s) selected"; } } };
+            btnSource2Files.Click += (s, e) =>
+            {
+                using (OpenFileDialog ofd = new OpenFileDialog
+                {
+                    Multiselect = true,
+                    Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp"
+                })
+                {
+                    if (DialogMemoryManager.ShowOpenDialog(
+                        ofd,
+                        "Formatting.SourceFiles") == DialogResult.OK)
+                    {
+                        selectedRawFiles = ofd.FileNames;
+                        selectedRawFolder = "";
+                        txtSource2.Text =
+                            $"{selectedRawFiles.Length} image(s) selected";
+                    }
+                }
+            };
             Button btnSource2Folder = new Button { Text = "Folder", Location = new Point(335, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
-            btnSource2Folder.Click += (s, e) => { string folder = SelectFolderModern(); if (!string.IsNullOrEmpty(folder)) { selectedRawFolder = folder; selectedRawFiles = null; txtSource2.Text = folder; } };
+            btnSource2Folder.Click += (s, e) => { string folder = SelectFolderModern("Formatting.SourceFolder"); if (!string.IsNullOrEmpty(folder)) { selectedRawFolder = folder; selectedRawFiles = null; txtSource2.Text = folder; } };
             chkSubDirs2 = new CheckBox { Text = "Include Sub-directories", Location = new Point(20, 75), AutoSize = true, Font = new Font("Segoe UI", 10) };
             chkPreserveFolders2 = new CheckBox
             {
@@ -762,7 +844,7 @@ namespace NPPLPrintMaster
             };
             txtExport2 = new TextBox { Location = new Point(430, 40), Size = new Size(250, 27), ReadOnly = true, Text = string.IsNullOrEmpty(currentSettings.DefaultExport2) ? "Select Formatted Output..." : currentSettings.DefaultExport2 };
             Button btnExport2 = new Button { Text = "Browse", Location = new Point(690, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
-            btnExport2.Click += (s, e) => { string f = SelectFolderModern(); if (!string.IsNullOrEmpty(f)) txtExport2.Text = f; };
+            btnExport2.Click += (s, e) => { string f = SelectFolderModern("Formatting.OutputFolder"); if (!string.IsNullOrEmpty(f)) txtExport2.Text = f; };
             Label lblThick = new Label { Text = "Border Width:", Location = new Point(20, 135), AutoSize = true, Font = new Font("Segoe UI", 10) };
             numThickness = new NumericUpDown { Location = new Point(125, 132), Size = new Size(50, 27), Minimum = 0, Maximum = 50, Value = 4 };
             btnColor = new Button { Text = "Pick Color", Location = new Point(190, 130), Size = new Size(90, 29), BackColor = selectedBorderColor, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
@@ -855,7 +937,9 @@ namespace NPPLPrintMaster
                     Filter = "Image Files|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff"
                 })
                 {
-                    if (ofd.ShowDialog() == DialogResult.OK)
+                    if (DialogMemoryManager.ShowOpenDialog(
+                        ofd,
+                        "Collage.SourceFiles") == DialogResult.OK)
                     {
                         selectedCollageFiles = ofd.FileNames;
                         selectedCollageFolder = "";
@@ -873,7 +957,7 @@ namespace NPPLPrintMaster
             };
             btnCollageFolder.Click += (s, e) =>
             {
-                string folder = SelectFolderModern();
+                string folder = SelectFolderModern("Collage.SourceFolder");
                 if (!string.IsNullOrWhiteSpace(folder))
                 {
                     selectedCollageFolder = folder;
@@ -920,7 +1004,7 @@ namespace NPPLPrintMaster
             };
             btnCollageOutput.Click += (s, e) =>
             {
-                string folder = SelectFolderModern();
+                string folder = SelectFolderModern("Collage.OutputFolder");
                 if (!string.IsNullOrWhiteSpace(folder))
                     txtCollageOutput.Text = folder;
             };
@@ -1106,44 +1190,184 @@ namespace NPPLPrintMaster
             btnClear.FlatAppearance.BorderSize = 1; btnClear.FlatAppearance.BorderColor = Color.IndianRed;
             btnClear.Click += (s, e) => { ClearAllLanesAndSmartFinder(); };
 
-            pageCompose.Controls.AddRange(new Control[] { chkShowText1, txtLane1Text, btnFont1, chkShowText2, txtLane2Text, btnFont2, btnRun3, btnClear });
+            chkOpenDirectFreeform = new CheckBox
+            {
+                Text = "Open directly in Freeform Builder (skip Job Card preview)",
+                Location = new Point(20, 498),
+                AutoSize = true,
+                Checked = currentSettings.OpenJobCardDirectlyInFreeform,
+                Font = new Font("Segoe UI", 9)
+            };
+            chkOpenDirectFreeform.CheckedChanged += (s, e) =>
+            {
+                currentSettings.OpenJobCardDirectlyInFreeform =
+                    chkOpenDirectFreeform.Checked;
+                SettingsManager.Save(currentSettings);
+            };
+
+            pageCompose.Controls.AddRange(new Control[]
+            {
+                chkShowText1, txtLane1Text, btnFont1,
+                chkShowText2, txtLane2Text, btnFont2,
+                btnRun3, btnClear, chkOpenDirectFreeform
+            });
 
             // Optional Smart Image Finder. Existing manual lanes above stay
             // exactly as they are and remain available at all times.
             BuildSmartImageFinder();
 
-            GroupBox grpTheme = new GroupBox { Text = "Appearance", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(600, 100) };
-            Label lblTheme = new Label { Text = "Global Theme:", Location = new Point(20, 40), AutoSize = true, Font = new Font("Segoe UI", 10) };
-            cmbTheme = new ComboBox { Location = new Point(140, 37), Size = new Size(200, 28), DropDownStyle = ComboBoxStyle.DropDownList };
+            GroupBox grpTheme = new GroupBox
+            {
+                Text = "Appearance",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Location = new Point(0, 0),
+                Size = new Size(600, 180)
+            };
+
+            Label lblTheme = new Label
+            {
+                Text = "Color Theme:",
+                Location = new Point(20, 35),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 10)
+            };
+
+            cmbTheme = new ComboBox
+            {
+                Location = new Point(180, 32),
+                Size = new Size(240, 28),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
             cmbTheme.Items.AddRange(ThemeManager.ThemeNames);
 
-            if (!cmbTheme.Items.Contains(currentSettings.Theme))
-                currentSettings.Theme = "Midnight Dark";
-
+            currentSettings.Theme =
+                AppearanceManager.NormalizeTheme(currentSettings.Theme);
             cmbTheme.SelectedItem = currentSettings.Theme;
-            cmbTheme.SelectedIndexChanged += (s, e) =>
-            {
-                if (cmbTheme.SelectedItem != null)
-                    ApplyTheme(cmbTheme.SelectedItem.ToString());
-            };
-            grpTheme.Controls.AddRange(new Control[] { lblTheme, cmbTheme });
 
-            GroupBox grpDefs = new GroupBox { Text = "Application Defaults", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 120), Size = new Size(600, 200) };
+            Label lblTypography = new Label
+            {
+                Text = "Typography / Text:",
+                Location = new Point(20, 73),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 10)
+            };
+
+            cmbTypography = new ComboBox
+            {
+                Location = new Point(180, 70),
+                Size = new Size(240, 28),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            cmbTypography.Items.AddRange(AppearanceManager.TypographyNames);
+            currentSettings.TypographyStyle =
+                AppearanceManager.NormalizeTypographyChoice(
+                    currentSettings.TypographyStyle);
+            cmbTypography.SelectedItem = currentSettings.TypographyStyle;
+
+            Label lblLayout = new Label
+            {
+                Text = "Layout Style:",
+                Location = new Point(20, 111),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 10)
+            };
+
+            cmbLayout = new ComboBox
+            {
+                Location = new Point(180, 108),
+                Size = new Size(240, 28),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            cmbLayout.Items.AddRange(AppearanceManager.LayoutNames);
+            currentSettings.LayoutStyle =
+                AppearanceManager.NormalizeLayoutChoice(
+                    currentSettings.LayoutStyle);
+            cmbLayout.SelectedItem = currentSettings.LayoutStyle;
+
+            Button btnResetAppearance = new Button
+            {
+                Text = "Reset to NPPL Default",
+                Location = new Point(430, 32),
+                Size = new Size(145, 28),
+                FlatStyle = FlatStyle.Flat
+            };
+
+            lblAppearanceResolved = new Label
+            {
+                Text = "",
+                Location = new Point(20, 145),
+                Size = new Size(550, 24),
+                AutoEllipsis = true,
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Italic)
+            };
+
+            EventHandler appearanceChanged = (s, e) =>
+            {
+                string selectedTheme =
+                    cmbTheme.SelectedItem == null
+                        ? "Forest Graphite"
+                        : cmbTheme.SelectedItem.ToString();
+
+                ApplyTheme(selectedTheme);
+            };
+
+            cmbTheme.SelectedIndexChanged += appearanceChanged;
+            cmbTypography.SelectedIndexChanged += appearanceChanged;
+            cmbLayout.SelectedIndexChanged += appearanceChanged;
+
+            btnResetAppearance.Click += (s, e) =>
+            {
+                cmbTheme.SelectedItem = "Forest Graphite";
+                cmbTypography.SelectedItem =
+                    AppearanceManager.UseThemeDefault;
+                cmbLayout.SelectedItem =
+                    AppearanceManager.UseThemeDefault;
+                ApplyTheme("Forest Graphite");
+            };
+
+            grpTheme.Controls.AddRange(
+                new Control[]
+                {
+                    lblTheme,
+                    cmbTheme,
+                    lblTypography,
+                    cmbTypography,
+                    lblLayout,
+                    cmbLayout,
+                    btnResetAppearance,
+                    lblAppearanceResolved
+                });
+
+            GroupBox grpDefs = new GroupBox { Text = "Application Defaults", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 200), Size = new Size(600, 200) };
             Label lblDefDpi = new Label { Text = "Default Extraction DPI:", Location = new Point(20, 40), AutoSize = true, Font = new Font("Segoe UI", 10) };
             numDefDpi = new NumericUpDown { Location = new Point(200, 37), Size = new Size(80, 27), Minimum = 96, Maximum = 2400, Value = currentSettings.DefaultDpi };
             Label lblDefEx1 = new Label { Text = "Default Extraction Output:", Location = new Point(20, 85), AutoSize = true, Font = new Font("Segoe UI", 10) };
             txtDefExport1 = new TextBox { Location = new Point(200, 82), Size = new Size(280, 27), Text = currentSettings.DefaultExport1 };
             Button btnDefEx1 = new Button { Text = "Browse", Location = new Point(490, 81), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat };
-            btnDefEx1.Click += (s, e) => { string f = SelectFolderModern(); if (!string.IsNullOrEmpty(f)) txtDefExport1.Text = f; };
+            btnDefEx1.Click += (s, e) => { string f = SelectFolderModern("Settings.DefaultExtractionOutput"); if (!string.IsNullOrEmpty(f)) txtDefExport1.Text = f; };
             Label lblDefEx2 = new Label { Text = "Default Formatting Output:", Location = new Point(20, 130), AutoSize = true, Font = new Font("Segoe UI", 10) };
             txtDefExport2 = new TextBox { Location = new Point(200, 127), Size = new Size(280, 27), Text = currentSettings.DefaultExport2 };
             Button btnDefEx2 = new Button { Text = "Browse", Location = new Point(490, 126), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat };
-            btnDefEx2.Click += (s, e) => { string f = SelectFolderModern(); if (!string.IsNullOrEmpty(f)) txtDefExport2.Text = f; };
+            btnDefEx2.Click += (s, e) => { string f = SelectFolderModern("Settings.DefaultFormattingOutput"); if (!string.IsNullOrEmpty(f)) txtDefExport2.Text = f; };
             grpDefs.Controls.AddRange(new Control[] { lblDefDpi, numDefDpi, lblDefEx1, txtDefExport1, btnDefEx1, lblDefEx2, txtDefExport2, btnDefEx2 });
 
-            btnSaveSettings = new Button { Text = "💾 Save Preferences", Location = new Point(0, 340), Size = new Size(200, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
+            btnSaveSettings = new Button { Text = "💾 Save Preferences", Location = new Point(0, 420), Size = new Size(200, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnSaveSettings.Click += (s, e) => {
-                currentSettings.Theme = cmbTheme.SelectedItem.ToString();
+                currentSettings.Theme =
+                    cmbTheme.SelectedItem == null
+                        ? "Forest Graphite"
+                        : cmbTheme.SelectedItem.ToString();
+
+                currentSettings.TypographyStyle =
+                    cmbTypography.SelectedItem == null
+                        ? AppearanceManager.UseThemeDefault
+                        : cmbTypography.SelectedItem.ToString();
+
+                currentSettings.LayoutStyle =
+                    cmbLayout.SelectedItem == null
+                        ? AppearanceManager.UseThemeDefault
+                        : cmbLayout.SelectedItem.ToString();
+
                 currentSettings.DefaultDpi = (int)numDefDpi.Value;
                 currentSettings.DefaultExport1 = txtDefExport1.Text;
                 currentSettings.DefaultExport2 = txtDefExport2.Text;
@@ -1169,6 +1393,7 @@ namespace NPPLPrintMaster
             btnNavFreeform.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
             btnNavSettings.Click += (s, e) => SwitchPage(pageSettings, btnNavSettings, "Application Settings");
 
+            CaptureOriginalAppearance();
             SwitchPage(pageHome, navButtons[0], "Dashboard Home");
         }
 
@@ -1200,681 +1425,49 @@ namespace NPPLPrintMaster
             targetPage.Visible = true; targetPage.BringToFront(); lblHeaderTitle.Text = headerTitle;
         }
 
-        private void ApplyTheme(string themeName)
-        {
-            activeTheme = ThemeManager.GetTheme(themeName);
-            sidebarColor = activeTheme.SidebarColor; sidebarHover = activeTheme.SidebarHover;
-            bgLight = activeTheme.BgLight; contentBg = activeTheme.ContentBg;
-            textColor = activeTheme.TextColor; controlBg = activeTheme.ControlBg; activeColor = activeTheme.ActiveColor;
-
-            this.BackColor = bgLight; pnlContent.BackColor = bgLight; pnlHeader.BackColor = contentBg;
-            lblHeaderTitle.ForeColor = textColor; pnlSidebar.BackColor = sidebarColor; sidebarSplitter.BackColor = activeColor;
-
-            pnlLogo.BackColor = (sidebarColor.R > 200) ? Color.FromArgb(220, 220, 220) : Color.FromArgb(20, 20, 24);
-            if (lblAppTitle != null) lblAppTitle.ForeColor = (sidebarColor.R > 200) ? Color.Black : Color.White;
-            if (lblAppSub != null) lblAppSub.ForeColor = activeColor;
-
-            menuBar.BackColor = contentBg; menuBar.ForeColor = textColor;
-            foreach (ToolStripItem item in menuBar.Items)
-            {
-                item.ForeColor = textColor;
-                if (item is ToolStripMenuItem dropDownItem) { foreach (ToolStripItem subItem in dropDownItem.DropDownItems) { subItem.BackColor = contentBg; subItem.ForeColor = textColor; } }
-            }
-
-            foreach (Button btn in navButtons)
-            {
-                btn.BackColor = (btn == activeNavButton) ? activeColor : sidebarColor;
-                btn.ForeColor = (btn == activeNavButton)
-                    ? ThemeManager.GetContrastTextColor(activeColor)
-                    : ThemeManager.GetContrastTextColor(sidebarColor);
-                if (btn.Text.Contains("Pro Freeform")) btn.ForeColor = (sidebarColor.R > 200 && btn != activeNavButton) ? Color.DarkGoldenrod : Color.Gold;
-            }
-
-            ThemeManager.ApplyColorsToControls(pageHome.Controls, activeTheme);
-            ThemeManager.ApplyColorsToControls(pageExtract.Controls, activeTheme);
-            ThemeManager.ApplyColorsToControls(pageFormat.Controls, activeTheme);
-            ThemeManager.ApplyColorsToControls(pageCompose.Controls, activeTheme);
-            ThemeManager.ApplyColorsToControls(pageSettings.Controls, activeTheme);
-
-            if (btnRun1 != null)
-            {
-                btnRun1.BackColor = activeColor;
-                btnRun1.ForeColor = ThemeManager.GetContrastTextColor(activeColor);
-            }
-
-            if (btnSaveSettings != null)
-            {
-                btnSaveSettings.BackColor = activeColor;
-                btnSaveSettings.ForeColor = ThemeManager.GetContrastTextColor(activeColor);
-            }
-
-            // Determine workspace brightness from the actual content surface,
-            // not from the sidebar. This is important for themes with a dark
-            // blue sidebar and a light workspace.
-            bool isLightTheme = ThemeManager.IsLight(contentBg);
-
-            foreach (Control c in pageCompose.Controls)
-            {
-                if (c is Panel wrapper && wrapper.Size.Width == 310)
-                {
-                    wrapper.BackColor = contentBg;
-
-                    foreach (Control child in wrapper.Controls)
-                    {
-                        if (child is Label lbl)
-                            lbl.ForeColor = textColor;
-
-                        if (child is FlowLayoutPanel flp)
-                            flp.BackColor = controlBg;
-
-                        if (child is Button btnBrowse)
-                        {
-                            btnBrowse.BackColor = controlBg;
-                            btnBrowse.ForeColor = textColor;
-                            btnBrowse.FlatAppearance.BorderColor = activeTheme.BorderColor;
-                        }
-                    }
-                }
-                else if (c is TextBox txt)
-                {
-                    txt.BackColor = controlBg;
-                    txt.ForeColor = textColor;
-                }
-                else if (c is Button btnAction)
-                {
-                    if (btnAction.Text.Contains("Generate"))
-                    {
-                        btnAction.BackColor = activeColor;
-                        btnAction.ForeColor = ThemeManager.GetContrastTextColor(activeColor);
-                    }
-                    else if (btnAction.Text.Contains("Clear"))
-                    {
-                        btnAction.BackColor = controlBg;
-                        btnAction.ForeColor = isLightTheme
-                            ? Color.FromArgb(176, 45, 45)
-                            : Color.FromArgb(255, 130, 130);
-                    }
-                    else if (btnAction.Text.Contains("Aa Font"))
-                    {
-                        btnAction.BackColor = controlBg;
-                        btnAction.ForeColor = textColor;
-                    }
-                }
-            }
-        }
-
-        private void BuildSmartImageFinder()
-        {
-            GroupBox grp = new GroupBox
-            {
-                Text = "Smart Image Finder V1.2 (Optional)",
-                Location = new Point(20, 520),
-                Size = new Size(970, 545),
-                Font = new Font("Segoe UI", 11, FontStyle.Bold)
-            };
-
-            Label hint = new Label
-            {
-                Text = "Scanner-ready: scan or type a code — matching preview appears automatically. Click preview for large inspector.",
-                Location = new Point(20, 30),
-                Size = new Size(920, 22),
-                Font = new Font("Segoe UI", 9)
-            };
-
-            Label lp = new Label
-            {
-                Text = "Product Barcode Directory:",
-                Location = new Point(20, 67),
-                AutoSize = true,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
-            };
-
-            Label lc = new Label
-            {
-                Text = "Carton Barcode Directory:",
-                Location = new Point(20, 102),
-                AutoSize = true,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
-            };
-
-            // Compact read-only path fields. Keep the complete physical path in
-            // Text so indexing/watchers continue using exactly the same value.
-            txtSmartProductFolder = new TextBox
-            {
-                Location = new Point(215, 62),
-                Size = new Size(485, 27),
-                ReadOnly = true,
-                TabStop = false,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Regular),
-                Text = currentSettings.SmartProductImageFolder ?? ""
-            };
-
-            txtSmartCartonFolder = new TextBox
-            {
-                Location = new Point(215, 97),
-                Size = new Size(485, 27),
-                ReadOnly = true,
-                TabStop = false,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Regular),
-                Text = currentSettings.SmartCartonImageFolder ?? ""
-            };
-
-            // Hovering either compact path field reveals the complete directory.
-            smartFolderToolTip = new ToolTip
-            {
-                InitialDelay = 350,
-                ReshowDelay = 100,
-                AutoPopDelay = 12000,
-                ShowAlways = true
-            };
-            smartFolderToolTip.SetToolTip(txtSmartProductFolder, txtSmartProductFolder.Text);
-            smartFolderToolTip.SetToolTip(txtSmartCartonFolder, txtSmartCartonFolder.Text);
-
-            txtSmartProductFolder.TextChanged +=
-                (s, e) => smartFolderToolTip.SetToolTip(
-                    txtSmartProductFolder,
-                    txtSmartProductFolder.Text);
-
-            txtSmartCartonFolder.TextChanged +=
-                (s, e) => smartFolderToolTip.SetToolTip(
-                    txtSmartCartonFolder,
-                    txtSmartCartonFolder.Text);
-            Button bp = new Button { Text = "Folder", Location = new Point(710, 61), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
-            Button bc = new Button { Text = "Folder", Location = new Point(710, 96), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
-            btnSmartRefresh = new Button { Text = "↻ Incremental Refresh", Location = new Point(795, 61), Size = new Size(155, 29), FlatStyle = FlatStyle.Flat };
-            chkSmartMonitor = new CheckBox { Text = "Monitor folders automatically", Location = new Point(795, 99), Size = new Size(170, 24), Checked = true, Font = new Font("Segoe UI", 8) };
-            lblSmartStatus = new Label
-            {
-                Text = "● READY   " + GetSmartIndexSummary(),
-                Location = new Point(20, 132),
-                Size = new Size(930, 20),
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Regular)
-            };
-
-            lblSmartHealth = new Label
-            {
-                Text = GetSmartHealthSummary(),
-                Location = new Point(20, 154),
-                Size = new Size(720, 22),
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold)
-            };
-
-            Button bfp = new Button
-            {
-                Text = "Product Failures",
-                Location = new Point(755, 150),
-                Size = new Size(95, 28),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 8)
-            };
-
-            Button bfc = new Button
-            {
-                Text = "Carton Failures",
-                Location = new Point(855, 150),
-                Size = new Size(95, 28),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 8)
-            };
-
-            GroupBox gp = CreateSmartSearchGroup("Product Barcode / EAN", new Point(20, 190), false);
-            GroupBox gc = CreateSmartSearchGroup("Carton SAP Code", new Point(490, 190), true);
-
-            bp.Click += (s, e) => SelectSmartFolder(false);
-            bc.Click += (s, e) => SelectSmartFolder(true);
-            btnSmartRefresh.Click += async (s, e) => await RefreshSmartIndexesAsync(false, false);
-            chkSmartMonitor.CheckedChanged += (s, e) => SetupSmartWatchers();
-            bfp.Click += (s, e) => ShowFailures("Product", productImageIndex);
-            bfc.Click += (s, e) => ShowFailures("Carton", cartonImageIndex);
-
-            grp.Controls.AddRange(new Control[] { hint, lp, lc, txtSmartProductFolder, txtSmartCartonFolder, bp, bc, btnSmartRefresh, chkSmartMonitor, lblSmartStatus, lblSmartHealth, bfp, bfc, gp, gc });
-            pageCompose.Controls.Add(grp);
-            pageCompose.AutoScrollMinSize = new Size(0, 1095);
-
-            smartMonitorTimer = new System.Windows.Forms.Timer { Interval = 2500 };
-            smartMonitorTimer.Tick += async (s, e) =>
-            {
-                smartMonitorTimer.Stop();
-                if (!smartRefreshRunning && chkSmartMonitor.Checked)
-                    await RefreshSmartIndexesAsync(false, true);
-            };
-
-            // Safety pass: catches a rare FileSystemWatcher event that Windows
-            // may drop during a burst copy. Unchanged files reuse cached data.
-            smartSafetyTimer = new System.Windows.Forms.Timer { Interval = 45000 };
-            smartSafetyTimer.Tick += async (s, e) =>
-            {
-                if (!smartRefreshRunning && chkSmartMonitor != null && chkSmartMonitor.Checked)
-                    await RefreshSmartIndexesAsync(false, true);
-            };
-            smartSafetyTimer.Start();
-            SetupSmartWatchers();
-        }
-
-        private GroupBox CreateSmartSearchGroup(string title, Point location, bool carton)
-        {
-            GroupBox grp = new GroupBox
-            {
-                Text = title,
-                Location = location,
-                Size = new Size(460, 325),
-                Font = new Font("Segoe UI", 10, FontStyle.Bold)
-            };
-
-            // Scanner input is the main interaction point, so give it a little
-            // more visual weight while keeping the existing auto-search logic.
-            TextBox code = new TextBox
-            {
-                Location = new Point(15, 31),
-                Size = new Size(295, 30),
-                Font = new Font("Consolas", 11, FontStyle.Bold)
-            };
-
-            // Manual Find remains available as a compact fallback because
-            // normal scanner/typing searches already happen automatically.
-            Button find = new Button
-            {
-                Text = carton ? "Find Carton" : "Find Product",
-                Location = new Point(320, 31),
-                Size = new Size(120, 30),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
-            };
-
-            ListBox list = new ListBox
-            {
-                Location = new Point(15, 72),
-                Size = new Size(210, 203),
-                HorizontalScrollbar = true,
-                Font = new Font("Segoe UI", 8.5f)
-            };
-
-            PictureBox pic = new PictureBox
-            {
-                Location = new Point(235, 72),
-                Size = new Size(205, 203),
-                BorderStyle = BorderStyle.FixedSingle,
-                SizeMode = PictureBoxSizeMode.Zoom,
-                BackColor = Color.White,
-                Cursor = Cursors.Hand
-            };
-
-            // A quiet empty-state message makes the preview area feel
-            // intentional instead of looking like an unused white box.
-            pic.Paint += (s, e) =>
-            {
-                PictureBox preview = s as PictureBox;
-                if (preview == null || preview.Image != null) return;
-
-                string emptyText = carton
-                    ? "No Carton Image\r\nScan or enter SAP"
-                    : "No Product Image\r\nScan or enter EAN";
-
-                TextRenderer.DrawText(
-                    e.Graphics,
-                    emptyText,
-                    new Font("Segoe UI", 9, FontStyle.Regular),
-                    preview.ClientRectangle,
-                    Color.DimGray,
-                    TextFormatFlags.HorizontalCenter |
-                    TextFormatFlags.VerticalCenter |
-                    TextFormatFlags.WordBreak);
-            };
-
-            Label tip = new Label
-            {
-                Text = "Click preview for large inspector",
-                Location = new Point(235, 278),
-                Size = new Size(205, 17),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Segoe UI", 7.5f)
-            };
-
-            Button add = new Button
-            {
-                Text = carton ? "Add to Carton Lane" : "Add to Product Lane",
-                Location = new Point(235, 296),
-                Size = new Size(205, 27),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold)
-            };
-
-            if (smartFolderToolTip != null)
-            {
-                smartFolderToolTip.SetToolTip(
-                    code,
-                    carton
-                        ? "Scanner-ready: scan or type Carton SAP code. Search runs automatically."
-                        : "Scanner-ready: scan or type Product EAN. Search runs automatically.");
-
-                smartFolderToolTip.SetToolTip(
-                    find,
-                    "Manual fallback search. Normal typing/scanning searches automatically.");
-            }
-
-            if (carton) { txtSmartCartonCode = code; lstSmartCartonResults = list; pbSmartCartonPreview = pic; }
-            else { txtSmartProductCode = code; lstSmartProductResults = list; pbSmartProductPreview = pic; }
-
-            SmartImageFinderEngine searchIndex = carton ? cartonImageIndex : productImageIndex;
-            string searchType = carton ? "Carton" : "Product";
-
-            find.Click += (s, e) => FindSmartImages(searchIndex, code.Text, list, pic, searchType);
-
-            System.Windows.Forms.Timer searchTimer = new System.Windows.Forms.Timer { Interval = 300 };
-            searchTimer.Tick += (s, e) =>
-            {
-                searchTimer.Stop();
-                if (!string.IsNullOrWhiteSpace(code.Text))
-                    FindSmartImages(searchIndex, code.Text, list, pic, searchType);
-            };
-
-            if (carton) smartCartonSearchTimer = searchTimer;
-            else smartProductSearchTimer = searchTimer;
-
-            code.TextChanged += (s, e) =>
-            {
-                searchTimer.Stop();
-
-                if (string.IsNullOrWhiteSpace(code.Text))
-                {
-                    ClearSmartSearch(list, pic, searchType);
-                    return;
-                }
-
-                // Short debounce: typing does not search on every key,
-                // while a USB scanner still feels immediate.
-                searchTimer.Start();
-            };
-
-            code.KeyDown += (s, e) =>
-            {
-                if (e.KeyCode != Keys.Enter) return;
-                e.SuppressKeyPress = true;
-                searchTimer.Stop();
-                if (!string.IsNullOrWhiteSpace(code.Text))
-                    FindSmartImages(searchIndex, code.Text, list, pic, searchType);
-                code.SelectAll();
-                code.Focus();
-            };
-            list.SelectedIndexChanged += (s, e) => PreviewSmartResult(list, pic);
-            list.DoubleClick += (s, e) => OpenInspector(list, code.Text);
-            pic.Click += (s, e) => OpenInspector(list, code.Text);
-            add.Click += (s, e) => AddSmartResultToLane(list, carton ? pnlCartons : pnlProducts, carton ? "Carton" : "Product");
-
-            grp.Controls.AddRange(new Control[] { code, find, list, pic, tip, add });
-            return grp;
-        }
-
-        private void SelectSmartFolder(bool carton)
-        {
-            string folder = SelectFolderModern();
-            if (string.IsNullOrWhiteSpace(folder)) return;
-            if (carton) { txtSmartCartonFolder.Text = folder; currentSettings.SmartCartonImageFolder = folder; }
-            else { txtSmartProductFolder.Text = folder; currentSettings.SmartProductImageFolder = folder; }
-            SettingsManager.Save(currentSettings);
-            SetupSmartWatchers();
-            lblSmartStatus.Text = (carton ? "Carton" : "Product") + " directory changed. Click Incremental Refresh.";
-        }
-
-        private async System.Threading.Tasks.Task RefreshSmartIndexesAsync(bool forceAll, bool automatic)
-        {
-            if (smartRefreshRunning) return;
-            string pf = txtSmartProductFolder == null ? "" : txtSmartProductFolder.Text;
-            string cf = txtSmartCartonFolder == null ? "" : txtSmartCartonFolder.Text;
-            if (!Directory.Exists(pf) && !Directory.Exists(cf))
-            {
-                if (!automatic) MessageBox.Show("Select at least one valid Product or Carton image directory.", "Smart Image Finder", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            smartRefreshRunning = true;
-            btnSmartRefresh.Enabled = false;
-            btnSmartRefresh.Text = automatic ? "Auto refreshing..." : "Refreshing...";
-            try
-            {
-                SmartImageRefreshResult pr = null, cr = null;
-                if (Directory.Exists(pf))
-                    pr = await System.Threading.Tasks.Task.Run(() => productImageIndex.RefreshIncremental(pf, p => ReportProgress("Product", p), forceAll));
-                if (Directory.Exists(cf))
-                    cr = await System.Threading.Tasks.Task.Run(() => cartonImageIndex.RefreshIncremental(cf, p => ReportProgress("Carton", p), forceAll));
-
-                if (Directory.Exists(pf)) currentSettings.SmartProductImageFolder = pf;
-                if (Directory.Exists(cf)) currentSettings.SmartCartonImageFolder = cf;
-                SettingsManager.Save(currentSettings);
-
-                lblSmartStatus.Text = automatic ? "Folder change detected — index updated automatically." :
-                    "Product: " + (pr == null ? "not scanned" : pr.ToString()) + "   |   Carton: " + (cr == null ? "not scanned" : cr.ToString());
-                lblSmartHealth.Text = GetSmartHealthSummary();
-                SetupSmartWatchers();
-
-                // If a code is already in either search box, immediately re-run
-                // it after an index update so a newly copied image can appear
-                // without the operator touching the search field again.
-                if (txtSmartProductCode != null &&
-                    !string.IsNullOrWhiteSpace(txtSmartProductCode.Text))
-                {
-                    FindSmartImages(
-                        productImageIndex,
-                        txtSmartProductCode.Text,
-                        lstSmartProductResults,
-                        pbSmartProductPreview,
-                        "Product");
-                }
-
-                if (txtSmartCartonCode != null &&
-                    !string.IsNullOrWhiteSpace(txtSmartCartonCode.Text))
-                {
-                    FindSmartImages(
-                        cartonImageIndex,
-                        txtSmartCartonCode.Text,
-                        lstSmartCartonResults,
-                        pbSmartCartonPreview,
-                        "Carton");
-                }
-            }
-            catch (Exception ex)
-            {
-                lblSmartStatus.Text = "Index refresh failed: " + ex.Message;
-                if (!automatic) MessageBox.Show(ex.Message, "Smart Image Finder Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                smartRefreshRunning = false;
-                btnSmartRefresh.Text = "↻ Incremental Refresh";
-                btnSmartRefresh.Enabled = true;
-            }
-        }
-
-        private void ReportProgress(string type, SmartImageIndexProgress p)
-        {
-            if (p == null || (p.Processed != p.Total && p.Processed % 25 != 0)) return;
-            try
-            {
-                BeginInvoke(new Action(() => lblSmartStatus.Text = string.Format(
-                    "{0}: {1}/{2} checked | {3} unchanged | {4} decoded | {5} failed",
-                    type, p.Processed, p.Total, p.Unchanged, p.Decoded, p.Failed)));
-            }
-            catch { }
-        }
-
-        private string GetSmartIndexSummary()
-        {
-            return string.Format("Product {0} image(s) / {1} code(s) | Carton {2} image(s) / {3} code(s)",
-                productImageIndex.FileCount, productImageIndex.CodeCount, cartonImageIndex.FileCount, cartonImageIndex.CodeCount);
-        }
-
-        private string GetSmartHealthSummary()
-        {
-            return string.Format("Health: Product {0} decoded / {1} failed / {2} duplicate code(s) | Carton {3} decoded / {4} failed / {5} duplicate code(s)",
-                productImageIndex.DecodedFileCount, productImageIndex.FailedFileCount, productImageIndex.DuplicateCodeCount,
-                cartonImageIndex.DecodedFileCount, cartonImageIndex.FailedFileCount, cartonImageIndex.DuplicateCodeCount);
-        }
-
-        private void SetupSmartWatchers()
-        {
-            DisposeWatcher(ref smartProductWatcher); DisposeWatcher(ref smartCartonWatcher);
-            if (chkSmartMonitor == null || !chkSmartMonitor.Checked) return;
-            smartProductWatcher = CreateWatcher(txtSmartProductFolder == null ? "" : txtSmartProductFolder.Text);
-            smartCartonWatcher = CreateWatcher(txtSmartCartonFolder == null ? "" : txtSmartCartonFolder.Text);
-        }
-
-        private FileSystemWatcher CreateWatcher(string folder)
-        {
-            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder)) return null;
-            try
-            {
-                FileSystemWatcher w = new FileSystemWatcher(folder)
-                {
-                    IncludeSubdirectories = true,
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
-                    InternalBufferSize = 64 * 1024
-                };
-                FileSystemEventHandler h = (s, e) => QueueAutoRefresh(e.FullPath);
-                RenamedEventHandler r = (s, e) => QueueAutoRefresh(e.FullPath);
-                ErrorEventHandler er = (s, e) => QueueAutoRefresh(folder);
-                w.Created += h; w.Changed += h; w.Deleted += h; w.Renamed += r; w.Error += er; w.EnableRaisingEvents = true;
-                return w;
-            }
-            catch { return null; }
-        }
-
-        private void QueueAutoRefresh(string path)
-        {
-            // Directory rename/delete events have no image extension, but can
-            // affect many indexed files, so they also trigger the debounce.
-            if (!string.IsNullOrWhiteSpace(path) &&
-                Path.HasExtension(path) &&
-                !IsSmartImage(path))
-                return;
-            try
-            {
-                BeginInvoke(new Action(() =>
-                {
-                    if (smartMonitorTimer == null) return;
-                    smartMonitorTimer.Stop(); smartMonitorTimer.Start();
-                    lblSmartStatus.Text = "Image-library change detected. Waiting for file copy to finish...";
-                }));
-            }
-            catch { }
-        }
-
-        private bool IsSmartImage(string path)
-        {
-            string e = Path.GetExtension(path ?? "");
-            return e.Equals(".png", StringComparison.OrdinalIgnoreCase) || e.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                   e.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) || e.Equals(".bmp", StringComparison.OrdinalIgnoreCase) ||
-                   e.Equals(".tif", StringComparison.OrdinalIgnoreCase) || e.Equals(".tiff", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private void DisposeWatcher(ref FileSystemWatcher w)
-        {
-            if (w == null) return;
-            try { w.EnableRaisingEvents = false; w.Dispose(); } catch { }
-            w = null;
-        }
-
-        private void ClearSmartSearch(ListBox list, PictureBox preview, string type)
-        {
-            if (list != null)
-            {
-                list.Items.Clear();
-                list.ClearSelected();
-            }
-
-            SetSmartPreviewImage(preview, null);
-
-            if (lblSmartStatus != null)
-                lblSmartStatus.Text = type + " search cleared. Scanner ready.";
-        }
-
-        private void ClearAllLanesAndSmartFinder()
-        {
-            ClearLane(pnlProducts);
-            ClearLane(pnlCartons);
-            ClearLane(pnlOthers);
-
-            if (smartProductSearchTimer != null) smartProductSearchTimer.Stop();
-            if (smartCartonSearchTimer != null) smartCartonSearchTimer.Stop();
-
-            if (txtSmartProductCode != null) txtSmartProductCode.Clear();
-            if (txtSmartCartonCode != null) txtSmartCartonCode.Clear();
-
-            if (lstSmartProductResults != null) lstSmartProductResults.Items.Clear();
-            if (lstSmartCartonResults != null) lstSmartCartonResults.Items.Clear();
-
-            SetSmartPreviewImage(pbSmartProductPreview, null);
-            SetSmartPreviewImage(pbSmartCartonPreview, null);
-
-            if (lblSmartStatus != null)
-                lblSmartStatus.Text = "All lanes and Smart Finder codes cleared. Scanner ready.";
-        }
-
-        private void FindSmartImages(SmartImageFinderEngine index, string code, ListBox list, PictureBox preview, string type)
-        {
-            string normalized = SmartImageFinderEngine.NormalizeCode(code);
-            if (string.IsNullOrWhiteSpace(normalized))
-            {
-                ClearSmartSearch(list, preview, type);
-                return;
-            }
-
-            List<string> matches = index.FindExact(normalized);
-            list.Items.Clear();
-            for (int i = 0; i < matches.Count; i++) list.Items.Add(new SmartImageResultItem(matches[i], i == 0 && matches.Count > 1));
-
-            if (matches.Count == 0)
-            {
-                SetSmartPreviewImage(preview, null);
-                lblSmartStatus.Text = type + " code " + normalized + " was not found.";
-                return;
-            }
-
-            list.SelectedIndex = 0;
-            lblSmartStatus.Text = matches.Count == 1
-                ? type + " exact match found. Click preview to inspect."
-                : "⚠ " + matches.Count + " duplicate/version matches for " + normalized + ". Newest modified image is first.";
-        }
-
-        private void PreviewSmartResult(ListBox list, PictureBox preview)
-        {
-            SmartImageResultItem x = list == null ? null : list.SelectedItem as SmartImageResultItem;
-            SetSmartPreviewImage(preview, x == null ? null : x.FilePath);
-        }
-
-        private void OpenInspector(ListBox list, string code)
-        {
-            SmartImageResultItem x = list == null ? null : list.SelectedItem as SmartImageResultItem;
-            if (x == null || !File.Exists(x.FilePath)) return;
-            using (SmartImageInspectorForm f = new SmartImageInspectorForm(x.FilePath, SmartImageFinderEngine.NormalizeCode(code))) f.ShowDialog(this);
-        }
-
-        private void SetSmartPreviewImage(PictureBox preview, string file)
-        {
-            if (preview == null) return;
-            Image old = preview.Image; preview.Image = null; if (old != null) old.Dispose();
-            if (string.IsNullOrWhiteSpace(file) || !File.Exists(file)) return;
-            try { using (Image i = Image.FromFile(file)) preview.Image = new Bitmap(i); } catch { }
-        }
-
-        private void ShowFailures(string type, SmartImageFinderEngine index)
-        {
-            List<string> failed = index.GetFailedFiles();
-            if (failed.Count == 0) { MessageBox.Show("No failed " + type + " barcode images are currently recorded.", "Index Health"); return; }
-            using (FailedBarcodeInspectorForm f = new FailedBarcodeInspectorForm(type, failed)) f.ShowDialog(this);
-        }
-
-        private void AddSmartResultToLane(ListBox list, FlowLayoutPanel lane, string type)
-        {
-            SmartImageResultItem x = list == null ? null : list.SelectedItem as SmartImageResultItem;
-            if (x == null || !File.Exists(x.FilePath)) { MessageBox.Show("Select a " + type + " search result first.", "Smart Image Finder"); return; }
-            AddThumbnail(lane, x.FilePath);
-            lblSmartStatus.Text = Path.GetFileName(x.FilePath) + " added to the " + type + " lane.";
-
-            if (type == "Product" && txtSmartCartonCode != null) { txtSmartCartonCode.Focus(); txtSmartCartonCode.SelectAll(); }
-            else if (type == "Carton" && txtSmartProductCode != null) { txtSmartProductCode.Focus(); txtSmartProductCode.SelectAll(); }
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         private sealed class SmartImageResultItem
         {
@@ -1888,560 +1481,30 @@ namespace NPPLPrintMaster
             }
         }
 
-        private string SelectFolderModern()
-        {
-            using (OpenFileDialog ofd = new OpenFileDialog { ValidateNames = false, CheckFileExists = false, CheckPathExists = true, FileName = "Folder Selection" })
-                if (ofd.ShowDialog() == DialogResult.OK) return Path.GetDirectoryName(ofd.FileName);
-            return "";
-        }
 
-        private string GetLastLaneFolder(string laneTitle)
-        {
-            string folder = "";
 
-            if (laneTitle.StartsWith("Lane 1", StringComparison.OrdinalIgnoreCase))
-                folder = currentSettings.LastProductFolder;
-            else if (laneTitle.StartsWith("Lane 2", StringComparison.OrdinalIgnoreCase))
-                folder = currentSettings.LastCartonFolder;
-            else if (laneTitle.StartsWith("Lane 3", StringComparison.OrdinalIgnoreCase))
-                folder = currentSettings.LastOtherFolder;
 
-            return !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder)
-                ? folder
-                : "";
-        }
 
-        private void SaveLastLaneFolder(string laneTitle, string folder)
-        {
-            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
-                return;
 
-            if (laneTitle.StartsWith("Lane 1", StringComparison.OrdinalIgnoreCase))
-                currentSettings.LastProductFolder = folder;
-            else if (laneTitle.StartsWith("Lane 2", StringComparison.OrdinalIgnoreCase))
-                currentSettings.LastCartonFolder = folder;
-            else if (laneTitle.StartsWith("Lane 3", StringComparison.OrdinalIgnoreCase))
-                currentSettings.LastOtherFolder = folder;
-            else
-                return;
 
-            SettingsManager.Save(currentSettings);
-        }
 
-        private FlowLayoutPanel CreateLane(string title, int xPos, Panel parent)
-        {
-            Panel laneWrapper = new Panel { Location = new Point(xPos, 20), Size = new Size(310, 320), BackColor = Color.FromArgb(50, 52, 59) };
-            Label lbl = new Label { Text = title, Location = new Point(10, 15), Font = new Font("Segoe UI", 11, FontStyle.Bold), ForeColor = Color.FromArgb(252, 213, 53), AutoSize = true };
-            FlowLayoutPanel panel = new FlowLayoutPanel { Location = new Point(10, 45), Size = new Size(290, 230), AllowDrop = true, AutoScroll = true, BackColor = Color.FromArgb(38, 40, 46), BorderStyle = BorderStyle.FixedSingle, Cursor = Cursors.Hand };
-            Button btnBrowse = new Button { Text = "📂 Browse Files...", Location = new Point(10, 280), Size = new Size(290, 30), Font = new Font("Segoe UI", 9, FontStyle.Bold), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(28, 29, 33), ForeColor = Color.White };
-            btnBrowse.FlatAppearance.BorderSize = 0;
 
-            void OpenBrowse(object s, EventArgs e)
-            {
-                using (OpenFileDialog ofd = new OpenFileDialog
-                {
-                    Multiselect = true,
-                    Filter = "Images|*.jpg;*.jpeg;*.png;*.bmp"
-                })
-                {
-                    string lastFolder = GetLastLaneFolder(title);
 
-                    if (!string.IsNullOrWhiteSpace(lastFolder))
-                        ofd.InitialDirectory = lastFolder;
 
-                    if (ofd.ShowDialog() != DialogResult.OK)
-                        return;
 
-                    if (ofd.FileNames.Length > 0)
-                        SaveLastLaneFolder(title, Path.GetDirectoryName(ofd.FileNames[0]));
 
-                    foreach (string f in ofd.FileNames)
-                        AddThumbnail(panel, f);
-                }
-            }
-            panel.Click += OpenBrowse; btnBrowse.Click += OpenBrowse;
-            panel.DragEnter += (s, e) => { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; };
-            panel.DragDrop += (s, e) =>
-            {
-                string[] items = (string[])e.Data.GetData(DataFormats.FileDrop);
 
-                foreach (string item in items)
-                {
-                    if (Directory.Exists(item))
-                    {
-                        SaveLastLaneFolder(title, item);
 
-                        foreach (string f in Directory.GetFiles(item))
-                        {
-                            string ext = Path.GetExtension(f);
-                            if (ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                                ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-                                ext.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
-                                ext.Equals(".bmp", StringComparison.OrdinalIgnoreCase))
-                            {
-                                AddThumbnail(panel, f);
-                            }
-                        }
-                    }
-                    else if (File.Exists(item))
-                    {
-                        SaveLastLaneFolder(title, Path.GetDirectoryName(item));
-                        AddThumbnail(panel, item);
-                    }
-                }
-            };
 
-            laneWrapper.Controls.Add(lbl);
-            laneWrapper.Controls.Add(panel);
-            laneWrapper.Controls.Add(btnBrowse);
-            parent.Controls.Add(laneWrapper);
 
-            return panel;
-        }
 
-        private void AddThumbnail(FlowLayoutPanel panel, string filePath)
-        {
-            try
-            {
-                if (panel == null || !File.Exists(filePath))
-                    return;
 
-                using (Image img = Image.FromFile(filePath))
-                {
-                    int picW = Math.Max(50, panel.ClientSize.Width - 30);
-                    int picH = Math.Max(
-                        1,
-                        (int)Math.Round(
-                            img.Height * ((double)picW / Math.Max(1, img.Width))));
 
-                    Bitmap thumbnail = new Bitmap(picW, picH);
 
-                    using (Graphics g = Graphics.FromImage(thumbnail))
-                    {
-                        g.Clear(Color.White);
-                        g.InterpolationMode =
-                            System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                        g.DrawImage(
-                            img,
-                            new Rectangle(0, 0, picW, picH),
-                            0,
-                            0,
-                            img.Width,
-                            img.Height,
-                            GraphicsUnit.Pixel);
-                    }
 
-                    PictureBox pb = new PictureBox
-                    {
-                        Image = thumbnail,
-                        Size = new Size(picW, picH),
-                        SizeMode = PictureBoxSizeMode.Zoom,
-                        Tag = filePath,
-                        Cursor = Cursors.Hand,
-                        Margin = new Padding(5)
-                    };
 
-                    ContextMenuStrip cms = new ContextMenuStrip();
-                    ToolStripMenuItem removeItem =
-                        new ToolStripMenuItem("❌ Remove Image");
 
-                    removeItem.Click += (s, e) =>
-                    {
-                        if (pb.IsDisposed)
-                            return;
 
-                        panel.SuspendLayout();
-
-                        try
-                        {
-                            Image oldImage = pb.Image;
-                            pb.Image = null;
-                            pb.ContextMenuStrip = null;
-
-                            if (panel.Controls.Contains(pb))
-                                panel.Controls.Remove(pb);
-
-                            pb.Dispose();
-                            oldImage?.Dispose();
-                            cms.Dispose();
-                        }
-                        finally
-                        {
-                            panel.ResumeLayout(true);
-                        }
-                    };
-
-                    cms.Items.Add(removeItem);
-                    pb.ContextMenuStrip = cms;
-
-                    ToolTip tt = new ToolTip();
-                    tt.SetToolTip(pb, "Right-click the image to remove it.");
-                    pb.Disposed += (s, e) => tt.Dispose();
-
-                    panel.Controls.Add(pb);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    "Unable to add image thumbnail.\n\n" +
-                    Path.GetFileName(filePath) +
-                    "\n\n" +
-                    ex.Message,
-                    "Thumbnail Error",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-            }
-        }
-
-        private void ClearLane(FlowLayoutPanel panel) { foreach (Control c in panel.Controls.Cast<Control>().ToList()) { if (c is PictureBox pb) { pb.Image?.Dispose(); pb.Dispose(); } } panel.Controls.Clear(); }
-        private List<string> GetFilesFromLane(FlowLayoutPanel panel) { List<string> files = new List<string>(); foreach (Control c in panel.Controls) { if (c is PictureBox pb && pb.Tag != null) files.Add(pb.Tag.ToString()); } return files; }
-
-        private async void BtnLoadFindList_Click(object sender, EventArgs e)
-        {
-            using (OpenFileDialog ofd = new OpenFileDialog
-            {
-                Multiselect = false,
-                Filter =
-                    "Supported Lists (*.txt;*.xlsx;*.xls)|*.txt;*.xlsx;*.xls|" +
-                    "Text Files (*.txt)|*.txt|" +
-                    "Excel Files (*.xlsx;*.xls)|*.xlsx;*.xls|" +
-                    "All Files (*.*)|*.*"
-            })
-            {
-                if (ofd.ShowDialog() != DialogResult.OK)
-                    return;
-
-                try
-                {
-                    List<string> names =
-                        await Task.Run(() => BtwListReader.ReadNames(ofd.FileName));
-
-                    rtbFindNames.Lines =
-                        names
-                            .Where(n => !string.IsNullOrWhiteSpace(n))
-                            .ToArray();
-
-                    rtbFindResults.Clear();
-                    lastFindMatches.Clear();
-
-                    MessageBox.Show(
-                        $"Loaded {names.Count} BTW name(s).",
-                        "List Loaded",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(
-                        "Unable to read the list file.\n\n" + ex.Message,
-                        "List Error",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-                }
-            }
-        }
-
-        private async void BtnFindBtwFiles_Click(object sender, EventArgs e)
-        {
-            await FindBtwMatchesAsync(true);
-        }
-
-        private async void BtnFindAndExtract_Click(object sender, EventArgs e)
-        {
-            if (!Directory.Exists(txtFindMasterFolder.Text))
-            {
-                MessageBox.Show(
-                    "Please select a valid Master BTW Directory.",
-                    "Master Directory Required",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(txtFindOutput.Text) ||
-                txtFindOutput.Text.StartsWith("Select ", StringComparison.OrdinalIgnoreCase))
-            {
-                MessageBox.Show(
-                    "Please select an output folder.",
-                    "Output Folder Required",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            List<string> matches =
-                await FindBtwMatchesAsync(false);
-
-            if (matches.Count == 0)
-            {
-                MessageBox.Show(
-                    "No matching BTW files were found.",
-                    "Nothing to Extract",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
-            }
-
-            btnFindExtract.Enabled = false;
-            btnFindSearch.Enabled = false;
-            btnFindExtract.Text = "⏳ Extracting...";
-
-            try
-            {
-                Directory.CreateDirectory(txtFindOutput.Text);
-
-                int count =
-                    await BarTenderEngine.ExtractImages(
-                        matches,
-                        txtFindOutput.Text,
-                        cmbFindFormat.SelectedItem.ToString(),
-                        (int)numFindDpi.Value,
-                        chkFindPreserve.Checked,
-                        txtFindMasterFolder.Text);
-
-                Logger.LogAction(
-                    "FIND_EXTRACT",
-                    $"Found {matches.Count} BTW match(es); extracted {count} image(s) to {txtFindOutput.Text}" +
-                    (chkFindPreserve.Checked
-                        ? " (folder structure preserved)"
-                        : ""));
-
-                MessageBox.Show(
-                    $"Find & Extract complete!\n\n" +
-                    $"BTW matches: {matches.Count}\n" +
-                    $"Images extracted: {count}",
-                    "Success",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogAction(
-                    "ERROR",
-                    "Find & Extract: " + ex.Message);
-
-                MessageBox.Show(
-                    ex.Message,
-                    "Find & Extract Error",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
-            finally
-            {
-                btnFindExtract.Text = "▶ Find & Extract";
-                btnFindExtract.Enabled = true;
-                btnFindSearch.Enabled = true;
-            }
-        }
-
-        private async Task<List<string>> FindBtwMatchesAsync(
-            bool showSummary)
-        {
-            string masterRoot =
-                txtFindMasterFolder.Text == null
-                    ? string.Empty
-                    : txtFindMasterFolder.Text.Trim();
-
-            if (!Directory.Exists(masterRoot))
-            {
-                MessageBox.Show(
-                    "Please select a valid Master BTW Directory.",
-                    "Master Directory Required",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return new List<string>();
-            }
-
-            List<string> requestedNames =
-                GetRequestedBtwNames();
-
-            if (requestedNames.Count == 0)
-            {
-                MessageBox.Show(
-                    "Enter BTW names or load a TXT / Excel list first.",
-                    "BTW List Required",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return new List<string>();
-            }
-
-            btnFindSearch.Enabled = false;
-            string oldSearchText = btnFindSearch.Text;
-            btnFindSearch.Text = "⏳ Indexing / Searching...";
-
-            try
-            {
-                if (!string.Equals(
-                    indexedBtwRoot,
-                    masterRoot,
-                    StringComparison.OrdinalIgnoreCase) ||
-                    btwSearchIndex.Count == 0)
-                {
-                    Dictionary<string, List<string>> newIndex =
-                        await Task.Run(
-                            () => BuildBtwSearchIndex(masterRoot));
-
-                    btwSearchIndex = newIndex;
-                    indexedBtwRoot = masterRoot;
-                }
-
-                List<string> matches =
-                    new List<string>();
-
-                int foundNames = 0;
-                int missingNames = 0;
-                int duplicateNames = 0;
-
-                rtbFindResults.Clear();
-
-                foreach (string requested in requestedNames)
-                {
-                    List<string> paths;
-
-                    if (btwSearchIndex.TryGetValue(
-                        requested,
-                        out paths) &&
-                        paths != null &&
-                        paths.Count > 0)
-                    {
-                        foundNames++;
-
-                        if (paths.Count > 1)
-                        {
-                            duplicateNames++;
-                            rtbFindResults.AppendText(
-                                $"DUPLICATE  {requested}.btw  ({paths.Count} matches)\n");
-
-                            foreach (string path in paths)
-                            {
-                                rtbFindResults.AppendText(
-                                    "           " +
-                                    GetRelativeDisplayPath(masterRoot, path) +
-                                    "\n");
-                            }
-                        }
-                        else
-                        {
-                            rtbFindResults.AppendText(
-                                "FOUND      " +
-                                requested +
-                                ".btw  ->  " +
-                                GetRelativeDisplayPath(
-                                    masterRoot,
-                                    paths[0]) +
-                                "\n");
-                        }
-
-                        foreach (string path in paths)
-                        {
-                            if (!matches.Contains(
-                                path,
-                                StringComparer.OrdinalIgnoreCase))
-                            {
-                                matches.Add(path);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        missingNames++;
-                        rtbFindResults.AppendText(
-                            "NOT FOUND  " +
-                            requested +
-                            ".btw\n");
-                    }
-                }
-
-                lastFindMatches = matches;
-
-                rtbFindResults.AppendText(
-                    "\n----------------------------------------\n");
-                rtbFindResults.AppendText(
-                    $"Requested: {requestedNames.Count} | " +
-                    $"Found names: {foundNames} | " +
-                    $"Missing: {missingNames} | " +
-                    $"Duplicates: {duplicateNames} | " +
-                    $"BTW files to extract: {matches.Count}\n");
-                rtbFindResults.ScrollToCaret();
-
-                if (showSummary)
-                {
-                    MessageBox.Show(
-                        $"Search complete.\n\n" +
-                        $"Requested names: {requestedNames.Count}\n" +
-                        $"Found names: {foundNames}\n" +
-                        $"Missing names: {missingNames}\n" +
-                        $"Duplicate names: {duplicateNames}\n" +
-                        $"BTW files matched: {matches.Count}",
-                        "BTW Search",
-                        MessageBoxButtons.OK,
-                        missingNames > 0
-                            ? MessageBoxIcon.Warning
-                            : MessageBoxIcon.Information);
-                }
-
-                return matches;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    "Unable to search the master BTW directory.\n\n" +
-                    ex.Message,
-                    "BTW Search Error",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-
-                return new List<string>();
-            }
-            finally
-            {
-                btnFindSearch.Text = oldSearchText;
-                btnFindSearch.Enabled = true;
-            }
-        }
-
-        private List<string> GetRequestedBtwNames()
-        {
-            HashSet<string> unique =
-                new HashSet<string>(
-                    StringComparer.OrdinalIgnoreCase);
-
-            foreach (string line in rtbFindNames.Lines)
-            {
-                string normalized =
-                    NormalizeBtwLookupName(line);
-
-                if (!string.IsNullOrWhiteSpace(normalized))
-                    unique.Add(normalized);
-            }
-
-            return unique.ToList();
-        }
-
-        private static string NormalizeBtwLookupName(
-            string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return string.Empty;
-
-            string name =
-                value.Trim()
-                    .Trim('"')
-                    .Trim();
-
-            name = Path.GetFileName(name);
-
-            if (name.EndsWith(
-                ".btw",
-                StringComparison.OrdinalIgnoreCase))
-            {
-                name =
-                    Path.GetFileNameWithoutExtension(name);
-            }
-
-            return name.Trim();
-        }
 
         private static Dictionary<string, List<string>>
             BuildBtwSearchIndex(
@@ -2471,778 +1534,33 @@ namespace NPPLPrintMaster
             return index;
         }
 
-        private static IEnumerable<string>
-            EnumerateBtwFilesSafe(
-                string root)
-        {
-            Stack<string> pending =
-                new Stack<string>();
 
-            pending.Push(root);
 
-            while (pending.Count > 0)
-            {
-                string current =
-                    pending.Pop();
 
-                string[] files;
 
-                try
-                {
-                    files =
-                        Directory.GetFiles(
-                            current,
-                            "*.btw",
-                            SearchOption.TopDirectoryOnly);
-                }
-                catch
-                {
-                    files = new string[0];
-                }
 
-                foreach (string file in files)
-                    yield return file;
 
-                string[] directories;
 
-                try
-                {
-                    directories =
-                        Directory.GetDirectories(
-                            current,
-                            "*",
-                            SearchOption.TopDirectoryOnly);
-                }
-                catch
-                {
-                    directories = new string[0];
-                }
 
-                foreach (string directory in directories)
-                    pending.Push(directory);
-            }
-        }
 
-        private static string GetRelativeDisplayPath(
-            string root,
-            string file)
-        {
-            try
-            {
-                string rootWithSeparator =
-                    root.TrimEnd(
-                        Path.DirectorySeparatorChar,
-                        Path.AltDirectorySeparatorChar) +
-                    Path.DirectorySeparatorChar;
 
-                Uri rootUri =
-                    new Uri(rootWithSeparator);
 
-                Uri fileUri =
-                    new Uri(file);
-
-                return Uri.UnescapeDataString(
-                    rootUri
-                        .MakeRelativeUri(fileUri)
-                        .ToString()
-                        .Replace(
-                            '/',
-                            Path.DirectorySeparatorChar));
-            }
-            catch
-            {
-                return file;
-            }
-        }
-
-        private async void BtnRunBlock1_Click(object sender, EventArgs e)
-        {
-            List<string> filesToProcess = new List<string>();
-            if (selectedBtwFiles != null && selectedBtwFiles.Length > 0)
-                filesToProcess.AddRange(selectedBtwFiles);
-            else if (!string.IsNullOrWhiteSpace(selectedBtwFolder) && Directory.Exists(selectedBtwFolder))
-            {
-                SearchOption opt = chkSubDirs1.Checked
-                    ? SearchOption.AllDirectories
-                    : SearchOption.TopDirectoryOnly;
-
-                filesToProcess.AddRange(
-                    Directory.GetFiles(selectedBtwFolder, "*.btw", opt));
-            }
-
-            if (filesToProcess.Count == 0 ||
-                string.IsNullOrWhiteSpace(txtExport1.Text) ||
-                txtExport1.Text.StartsWith("Select ", StringComparison.OrdinalIgnoreCase))
-            {
-                MessageBox.Show("Please select .btw files and an export folder first.");
-                return;
-            }
-
-            bool extractAndFormat =
-                chkExtractAndFormat != null &&
-                chkExtractAndFormat.Checked;
-
-            btnRun1.Text = extractAndFormat
-                ? "⏳ Extracting + Formatting..."
-                : "⏳ Extracting... Please Wait...";
-            btnRun1.Enabled = false;
-
-            string tempExtractFolder = null;
-
-            try
-            {
-                string sourceRoot =
-                    !string.IsNullOrWhiteSpace(selectedBtwFolder)
-                        ? selectedBtwFolder
-                        : null;
-
-                string extractTarget = txtExport1.Text;
-
-                // One-task mode uses an isolated temporary extraction folder.
-                // This avoids loading and overwriting the same image file during
-                // formatting, and leaves only the final formatted output behind.
-                if (extractAndFormat)
-                {
-                    tempExtractFolder = Path.Combine(
-                        Path.GetTempPath(),
-                        "NPPLPrintMaster",
-                        "ExtractFormat_" + Guid.NewGuid().ToString("N"));
-
-                    Directory.CreateDirectory(tempExtractFolder);
-                    extractTarget = tempExtractFolder;
-                }
-
-                int extractedCount = await BarTenderEngine.ExtractImages(
-                    filesToProcess,
-                    extractTarget,
-                    cmbFormat.SelectedItem.ToString(),
-                    (int)numDpi.Value,
-                    chkPreserveFolders1.Checked,
-                    sourceRoot);
-
-                if (!extractAndFormat)
-                {
-                    Logger.LogAction(
-                        "EXTRACT",
-                        $"Extracted {extractedCount} files to {txtExport1.Text}" +
-                        (chkPreserveFolders1.Checked
-                            ? " (folder structure preserved)"
-                            : ""));
-
-                    MessageBox.Show(
-                        $"Step 1 Complete!\nExtracted {extractedCount} images.",
-                        "Success");
-
-                    return;
-                }
-
-                SearchOption tempSearchOption =
-                    chkPreserveFolders1.Checked
-                        ? SearchOption.AllDirectories
-                        : SearchOption.TopDirectoryOnly;
-
-                List<string> extractedImages =
-                    Directory.GetFiles(
-                        tempExtractFolder,
-                        "*.*",
-                        tempSearchOption)
-                    .Where(f =>
-                        f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                        f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-                        f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
-                        f.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                if (extractedImages.Count == 0)
-                    throw new InvalidOperationException(
-                        "BarTender extraction completed, but no extracted images were available for formatting.");
-
-                var progressTracker = new Progress<string>(message =>
-                {
-                    if (rtbFormatConsole == null) return;
-                    rtbFormatConsole.AppendText(message);
-                    rtbFormatConsole.ScrollToCaret();
-                });
-
-                if (rtbFormatConsole != null)
-                {
-                    rtbFormatConsole.Clear();
-                    rtbFormatConsole.AppendText(
-                        $"[ONE TASK] Extracted {extractedCount} image(s). Formatting now...\n");
-                    rtbFormatConsole.AppendText(
-                        "--------------------------------------------------\n");
-                }
-
-                int formattedCount = await FormatEngine.FormatImages(
-                    extractedImages,
-                    txtExport1.Text,
-                    chkPadding != null && chkPadding.Checked,
-                    numThickness == null ? 0 : (int)numThickness.Value,
-                    selectedBorderColor,
-                    progressTracker,
-                    chkPreserveFolders1.Checked,
-                    tempExtractFolder,
-                    cmbFormattingOutputFormat != null &&
-                    cmbFormattingOutputFormat.SelectedIndex == 1);
-
-                if (rtbFormatConsole != null)
-                {
-                    rtbFormatConsole.AppendText(
-                        "--------------------------------------------------\n");
-                    rtbFormatConsole.AppendText(
-                        $"[SYSTEM] One-task complete. Final formatted: {formattedCount}\n");
-                }
-
-                Logger.LogAction(
-                    "EXTRACT_FORMAT",
-                    $"BTW files: {filesToProcess.Count}; extracted: {extractedCount}; formatted: {formattedCount}; output: {txtExport1.Text}" +
-                    (chkPreserveFolders1.Checked
-                        ? " (folder structure preserved)"
-                        : ""));
-
-                MessageBox.Show(
-                    $"Extract + Format complete!\n\n" +
-                    $"Images extracted: {extractedCount}\n" +
-                    $"Final formatted images: {formattedCount}\n\n" +
-                    $"Output:\n{txtExport1.Text}",
-                    "One Task Complete",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message, "Error");
-                Logger.LogAction("ERROR", ex.Message);
-            }
-            finally
-            {
-                if (!string.IsNullOrWhiteSpace(tempExtractFolder) &&
-                    Directory.Exists(tempExtractFolder))
-                {
-                    try
-                    {
-                        Directory.Delete(tempExtractFolder, true);
-                    }
-                    catch
-                    {
-                        // Temporary cleanup must never interrupt production.
-                    }
-                }
-
-                btnRun1.Text = "▶ Extract Images";
-                btnRun1.Enabled = true;
-            }
-        }
-
-        private async void BtnRunBlock2_Click(object sender, EventArgs e)
-        {
-            List<string> filesToProcess = new List<string>();
-            if (selectedRawFiles != null && selectedRawFiles.Length > 0) filesToProcess.AddRange(selectedRawFiles);
-            else if (!string.IsNullOrWhiteSpace(selectedRawFolder) && Directory.Exists(selectedRawFolder))
-            {
-                SearchOption opt = chkSubDirs2.Checked ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                var allFiles = Directory.GetFiles(selectedRawFolder, "*.*", opt);
-                filesToProcess.AddRange(allFiles.Where(f => f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase)));
-            }
-
-            if (filesToProcess.Count == 0 || string.IsNullOrWhiteSpace(txtExport2.Text)) { MessageBox.Show("Please select images and an export folder first."); return; }
-
-            Button clickedButton = (Button)sender;
-            clickedButton.Text = "⏳ Formatting... Please Wait...";
-            clickedButton.Enabled = false;
-
-            rtbFormatConsole.Clear();
-            rtbFormatConsole.AppendText($"Starting batch format of {filesToProcess.Count} images...\n");
-            rtbFormatConsole.AppendText("--------------------------------------------------\n");
-
-            var progressTracker = new Progress<string>(message =>
-            {
-                rtbFormatConsole.AppendText(message);
-                rtbFormatConsole.ScrollToCaret();
-            });
-
-            string sourceRoot =
-                !string.IsNullOrWhiteSpace(selectedRawFolder)
-                    ? selectedRawFolder
-                    : null;
-
-            int count = await FormatEngine.FormatImages(
-                filesToProcess,
-                txtExport2.Text,
-                chkPadding.Checked,
-                (int)numThickness.Value,
-                selectedBorderColor,
-                progressTracker,
-                chkPreserveFolders2.Checked,
-                sourceRoot,
-                cmbFormattingOutputFormat != null &&
-                cmbFormattingOutputFormat.SelectedIndex == 1);
-
-            rtbFormatConsole.AppendText("--------------------------------------------------\n");
-            rtbFormatConsole.AppendText($"[SYSTEM] Done. Total formatted: {count}\n");
-
-            Logger.LogAction(
-                "FORMAT",
-                $"Formatted {count} images to {txtExport2.Text}" +
-                (chkPreserveFolders2.Checked ? " (folder structure preserved)" : ""));
-            clickedButton.Text = "▶ Format Images";
-            clickedButton.Enabled = true;
-            MessageBox.Show($"Step 2 Complete!\nFormatted {count} images.", "Success");
-        }
-
-        private async void BtnGenerateCollage_Click(object sender, EventArgs e)
-        {
-            List<string> filesToProcess = new List<string>();
-
-            if (selectedCollageFiles != null && selectedCollageFiles.Length > 0)
-            {
-                filesToProcess.AddRange(
-                    selectedCollageFiles.Where(IsSupportedCollageImage));
-            }
-            else if (!string.IsNullOrWhiteSpace(selectedCollageFolder) &&
-                     Directory.Exists(selectedCollageFolder))
-            {
-                SearchOption option =
-                    chkCollageSubDirs.Checked
-                        ? SearchOption.AllDirectories
-                        : SearchOption.TopDirectoryOnly;
-
-                try
-                {
-                    filesToProcess.AddRange(
-                        Directory.GetFiles(
-                            selectedCollageFolder,
-                            "*.*",
-                            option)
-                        .Where(IsSupportedCollageImage));
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(
-                        "Unable to scan the selected folder.\n\n" + ex.Message,
-                        "Collage Input Error",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-                    return;
-                }
-            }
-
-            filesToProcess =
-                filesToProcess
-                    .Where(File.Exists)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-            if (filesToProcess.Count == 0)
-            {
-                MessageBox.Show(
-                    "Please select image files or a folder containing supported images.",
-                    "No Images",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            string outputFolder =
-                txtCollageOutput == null
-                    ? string.Empty
-                    : txtCollageOutput.Text.Trim();
-
-            if (string.IsNullOrWhiteSpace(outputFolder) ||
-                outputFolder.StartsWith("Select", StringComparison.OrdinalIgnoreCase))
-            {
-                MessageBox.Show(
-                    "Please select an output folder.",
-                    "Output Folder Required",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-
-            int gridSize = cmbCollageGrid.SelectedIndex + 1;
-            string outputType = cmbCollageOutputType.SelectedItem.ToString();
-            bool landscape =
-                string.Equals(
-                    cmbCollageOrientation.SelectedItem.ToString(),
-                    "Landscape",
-                    StringComparison.OrdinalIgnoreCase);
-
-            Directory.CreateDirectory(outputFolder);
-
-            string extension =
-                outputType == "PDF"
-                    ? ".pdf"
-                    : outputType == "Word"
-                        ? ".docx"
-                        : ".xlsx";
-
-            string baseFileName;
-
-            if (chkCollageAutoFileName.Checked)
-            {
-                baseFileName =
-                    "ImageCollage_" +
-                    DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            }
-            else
-            {
-                baseFileName =
-                    txtCollageFileName == null
-                        ? string.Empty
-                        : txtCollageFileName.Text.Trim();
-
-                if (string.IsNullOrWhiteSpace(baseFileName))
-                {
-                    MessageBox.Show(
-                        "Please enter an output file name, or enable Auto-generate filename.",
-                        "File Name Required",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return;
-                }
-
-                baseFileName =
-                    Path.GetFileNameWithoutExtension(baseFileName);
-
-                if (baseFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-                {
-                    MessageBox.Show(
-                        "The output file name contains invalid characters.",
-                        "Invalid File Name",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return;
-                }
-            }
-
-            string outputPath =
-                Path.Combine(
-                    outputFolder,
-                    baseFileName + extension);
-
-            btnGenerateCollage.Enabled = false;
-            string oldButtonText = btnGenerateCollage.Text;
-            btnGenerateCollage.Text = "⏳ Generating...";
-
-            rtbFormatConsole.Clear();
-            rtbFormatConsole.AppendText(
-                "[COLLAGE] Preparing " + filesToProcess.Count + " image(s)...\n");
-            rtbFormatConsole.AppendText(
-                "[COLLAGE] Grid: " + gridSize + " x " + gridSize +
-                " | Output: " + outputType +
-                " | Orientation: " + (landscape ? "Landscape" : "Portrait") + "\n");
-            rtbFormatConsole.AppendText(
-                "--------------------------------------------------\n");
-
-            var progress = new Progress<string>(message =>
-            {
-                rtbFormatConsole.AppendText(message + Environment.NewLine);
-                rtbFormatConsole.ScrollToCaret();
-            });
-
-            try
-            {
-                CollageGenerationResult result =
-                    await Task.Run(
-                        () => ImageCollageEngine.Generate(
-                            filesToProcess,
-                            outputPath,
-                            outputType,
-                            gridSize,
-                            landscape,
-                            chkCollageShowFilename.Checked,
-                            chkCollageBorders.Checked,
-                            progress));
-
-                rtbFormatConsole.AppendText(
-                    "--------------------------------------------------\n");
-                rtbFormatConsole.AppendText(
-                    "[COLLAGE] Complete.\n");
-                rtbFormatConsole.AppendText(
-                    "[COLLAGE] Images: " + result.ImageCount +
-                    " | Unique sizes: " + result.UniqueSizeCount + "\n");
-                rtbFormatConsole.AppendText(
-                    "[COLLAGE] Most common size: " +
-                    result.MostCommonSize +
-                    " (" + result.MostCommonCount + " image(s))\n");
-                rtbFormatConsole.AppendText(
-                    "[COLLAGE] Saved: " + result.OutputPath + "\n");
-
-                Logger.LogAction(
-                    "COLLAGE",
-                    "Generated " + outputType +
-                    " collage with " + result.ImageCount +
-                    " image(s): " + result.OutputPath);
-
-                MessageBox.Show(
-                    "Collage created successfully!\n\n" +
-                    "Images: " + result.ImageCount + "\n" +
-                    "Unique sizes: " + result.UniqueSizeCount + "\n\n" +
-                    result.OutputPath,
-                    "Collage Complete",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                rtbFormatConsole.AppendText(
-                    "[COLLAGE ERROR] " + ex.Message + "\n");
-
-                Logger.LogAction(
-                    "ERROR",
-                    "Collage: " + ex.Message);
-
-                MessageBox.Show(
-                    "Unable to generate the collage.\n\n" + ex.Message,
-                    "Collage Error",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
-            finally
-            {
-                btnGenerateCollage.Text = oldButtonText;
-                btnGenerateCollage.Enabled = true;
-            }
-        }
-
-        private static bool IsSupportedCollageImage(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-                return false;
-
-            string extension =
-                Path.GetExtension(path).ToLowerInvariant();
-
-            return extension == ".png" ||
-                   extension == ".jpg" ||
-                   extension == ".jpeg" ||
-                   extension == ".bmp" ||
-                   extension == ".tif" ||
-                   extension == ".tiff";
-        }
 
         // ==========================================
         // STEP 3: PREVIEW GENERATOR WORKFLOW
         // ==========================================
-        private void BtnRunBlock3_Click(object sender, EventArgs e)
-        {
-            var lanes = new[] { GetFilesFromLane(pnlProducts), GetFilesFromLane(pnlCartons), GetFilesFromLane(pnlOthers) };
-            if (lanes[0].Count == 0 && lanes[1].Count == 0 && lanes[2].Count == 0)
-            {
-                MessageBox.Show("Please add images to at least one lane first.", "No Images", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            this.Cursor = Cursors.WaitCursor;
-            try
-            {
-                int colWidth = 1000, padding = 60, boxHeight = 120;
-                int[] colX = { padding, (padding * 2) + colWidth, (padding * 3) + (colWidth * 2) };
-                int[] colY = { padding, padding, padding };
-
-                List<CanvasItem> startingItems = new List<CanvasItem>();
-
-                for (int c = 0; c < 3; c++)
-                {
-                    foreach (string file in lanes[c])
-                    {
-                        if (!File.Exists(file)) continue;
-                        Image heavyImg = Image.FromFile(file);
-
-                        double scale = (c < 2) ? (double)colWidth / heavyImg.Width : Math.Min(1.0, (double)colWidth / heavyImg.Width);
-                        int drawW = (c < 2) ? colWidth : (int)Math.Round(heavyImg.Width * scale);
-                        int drawH = (int)Math.Round(heavyImg.Height * scale);
-
-                        Bitmap lightImg = new Bitmap(heavyImg, new Size(drawW, drawH));
-                        lightImg.SetResolution(heavyImg.HorizontalResolution, heavyImg.VerticalResolution);
-                        heavyImg.Dispose();
-
-                        int xPos = (c == 0) ? colX[0] : (c == 1) ? colX[1] : colX[2] + ((colWidth - drawW) / 2);
-                        int yPos = colY[c];
-
-                        string mem = customLayoutMemory.FirstOrDefault(m => m.StartsWith(file + "|"));
-                        if (mem != null)
-                        {
-                            var parts = mem.Split('|');
-                            if (parts.Length == 5) { xPos = int.Parse(parts[1]); yPos = int.Parse(parts[2]); drawW = int.Parse(parts[3]); drawH = int.Parse(parts[4]); }
-                        }
-
-                        string textTemplate = ""; bool drawBox = false;
-                        if (c == 0 && chkShowText1.Checked) { textTemplate = txtLane1Text.Text; drawBox = true; }
-                        else if (c == 1 && chkShowText2.Checked) { textTemplate = txtLane2Text.Text; drawBox = true; }
-
-                        startingItems.Add(new CanvasItem
-                        {
-                            FilePath = file,
-                            Img = lightImg,
-                            X = xPos,
-                            Y = yPos,
-                            Width = drawW,
-                            Height = drawH,
-                            OriginalAspect = (double)drawW / drawH,
-                            TextTemplate = textTemplate,
-                            ShowText = drawBox,
-                            ItemFont = (c == 0) ? fontLane1 : fontLane2
-                        });
-
-                        colY[c] = Math.Max(colY[c], yPos + drawH + (drawBox ? boxHeight + 20 : 0) + padding);
-                    }
-                }
-
-                int totalW = (colWidth * 3) + (padding * 4);
-                int totalH = Math.Max(1500, colY.Max() + padding);
-
-                Bitmap previewBitmap = new Bitmap(totalW, totalH);
-                previewBitmap.SetResolution(300, 300);
-
-                using (Graphics g = Graphics.FromImage(previewBitmap))
-                {
-                    g.Clear(Color.White);
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-
-                    using (Pen thickPen = new Pen(Color.Black, 12))
-                        g.DrawRectangle(thickPen, padding / 2, padding / 2, totalW - padding, totalH - padding);
-
-                    using (Pen boxPen = new Pen(Color.Black, 6))
-                    using (SolidBrush brush = new SolidBrush(Color.Black))
-                    using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                    {
-                        foreach (var item in startingItems)
-                        {
-                            g.DrawImage(item.Img, item.X, item.Y, item.Width, item.Height);
-                            if (item.ShowText)
-                            {
-                                int dynBoxHeight = (int)(item.Width * 0.13);
-                                int bY = item.Y + item.Height + 10;
-                                g.DrawRectangle(boxPen, item.X, bY, item.Width, dynBoxHeight);
-
-                                int wMM = (int)Math.Round((item.Width / item.Img.HorizontalResolution) * 25.4);
-                                int hMM = (int)Math.Round((item.Height / item.Img.VerticalResolution) * 25.4);
-                                string liveText = item.TextTemplate.Replace("{W}", wMM.ToString()).Replace("{H}", hMM.ToString());
-
-                                if (!string.IsNullOrEmpty(liveText))
-                                {
-                                    float maxTextW = item.Width - 40;
-                                    float maxTextH = dynBoxHeight - 20;
-
-                                    using (Font testFont = new Font(item.ItemFont.FontFamily, 100f, item.ItemFont.Style))
-                                    {
-                                        SizeF testSize = g.MeasureString(liveText, testFont);
-                                        float finalSize = Math.Max(1f, 100f * Math.Min(maxTextW / testSize.Width, maxTextH / testSize.Height));
-
-                                        using (Font autoFont = new Font(item.ItemFont.FontFamily, finalSize, item.ItemFont.Style))
-                                        {
-                                            g.DrawString(liveText, autoFont, brush, new RectangleF(item.X, bY, item.Width, dynBoxHeight), sf);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                this.Cursor = Cursors.Default;
-
-                // Capture the exact current three-lane workspace used to create this Job Card.
-                WorkspaceData jobCardWorkspace =
-                    BuildCurrentWorkspaceData();
-
-                JobCardPreviewForm previewForm = new JobCardPreviewForm(
-                    previewBitmap,
-                    startingItems,
-                    jobCardWorkspace,
-                    currentSettings,
-                    GetLastJobCardSaveFolder());
-
-                previewForm.FormClosed += (s, ev) =>
-                {
-                    // If they customized it, save back the custom layout memory
-                    // (Note: previewForm closes or hides when customize is clicked, but this catches closure)
-                };
-
-                previewForm.ShowDialog();
-            }
-            catch (Exception ex)
-            {
-                this.Cursor = Cursors.Default;
-                MessageBox.Show("Error generating preview: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        private string GetLastJobCardSaveFolder()
-        {
-            if (!string.IsNullOrWhiteSpace(currentSettings.LastJobCardSaveFolder) &&
-                Directory.Exists(currentSettings.LastJobCardSaveFolder))
-            {
-                return currentSettings.LastJobCardSaveFolder;
-            }
-
-            return "";
-        }
-
-        private string GetNpplStorageFolder()
-        {
-            // Use the exact physical path requested:
-            // C:\Users\<user>\Documents\NPPLPrintMaster
-            string userProfile =
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-            string folder =
-                Path.Combine(userProfile, "Documents", "NPPLPrintMaster");
-
-            Directory.CreateDirectory(folder);
-            return folder;
-        }
-
-        private WorkspaceData BuildCurrentWorkspaceData()
-        {
-            return new WorkspaceData
-            {
-                Lane1Files = GetFilesFromLane(pnlProducts),
-                Lane2Files = GetFilesFromLane(pnlCartons),
-                Lane3Files = GetFilesFromLane(pnlOthers),
-                Text1 = txtLane1Text.Text,
-                Text2 = txtLane2Text.Text,
-                ShowText1 = chkShowText1.Checked,
-                ShowText2 = chkShowText2.Checked,
-                Font1 = fontLane1,
-                Font2 = fontLane2,
-                LayoutMemory = new List<string>(customLayoutMemory)
-            };
-        }
 
 
 
-        private void SaveWorkspace()
-        {
-            using (SaveFileDialog sfd = new SaveFileDialog { Filter = "NPPL Project|*.nppl", FileName = "MyProject.nppl" })
-            {
-                if (sfd.ShowDialog() == DialogResult.OK)
-                {
-                    WorkspaceData data = BuildCurrentWorkspaceData();
-                    WorkspaceEngine.SaveToFile(sfd.FileName, data);
-                    Logger.LogAction("WORKSPACE_SAVE", $"Saved to {sfd.FileName}");
-                    MessageBox.Show("Workspace and Custom Layout saved successfully!", "Saved");
-                }
-            }
-        }
 
-        private void LoadWorkspace()
-        {
-            using (OpenFileDialog ofd = new OpenFileDialog { Filter = "NPPL Project|*.nppl" })
-            {
-                if (ofd.ShowDialog() == DialogResult.OK)
-                {
-                    WorkspaceData data = WorkspaceEngine.LoadFromFile(ofd.FileName);
-                    ClearLane(pnlProducts); ClearLane(pnlCartons); ClearLane(pnlOthers); customLayoutMemory.Clear();
-                    foreach (string file in data.Lane1Files) AddThumbnail(pnlProducts, file);
-                    foreach (string file in data.Lane2Files) AddThumbnail(pnlCartons, file);
-                    foreach (string file in data.Lane3Files) AddThumbnail(pnlOthers, file);
-                    txtLane1Text.Text = data.Text1; txtLane2Text.Text = data.Text2; chkShowText1.Checked = data.ShowText1; chkShowText2.Checked = data.ShowText2; fontLane1 = data.Font1; fontLane2 = data.Font2; customLayoutMemory = data.LayoutMemory;
-                    Logger.LogAction("WORKSPACE_LOAD", $"Loaded from {ofd.FileName}");
-                }
-            }
-        }
+
+
+
+
+
+
+
+
+
     }
 }
