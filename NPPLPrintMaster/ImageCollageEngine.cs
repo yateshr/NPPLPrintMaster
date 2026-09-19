@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -45,7 +45,11 @@ namespace NPPLPrintMaster
             bool landscape,
             bool showFilename,
             bool drawBorders,
-            IProgress<string> progress)
+            IProgress<string> progress,
+            IList<string> manualSlotPaths = null,
+            IDictionary<string, string> manualCaptions = null,
+            IDictionary<string, string> manualCustomNames = null,
+            string manualDisplayMode = "Filename")
         {
             if (imageFiles == null || imageFiles.Count == 0)
                 throw new ArgumentException("No images were supplied.");
@@ -89,16 +93,42 @@ namespace NPPLPrintMaster
                 " | Most common: " + mostCommon.Key +
                 " (" + mostCommon.Value + ")");
 
+            List<CollageImageInfo> renderImages = sorted;
+
+            if (manualSlotPaths != null)
+            {
+                if (!outputType.Equals("PDF", StringComparison.OrdinalIgnoreCase))
+                    throw new NotSupportedException(
+                        "Manual collage arrangement is currently supported for PDF output only.");
+
+                renderImages =
+                    BuildManualRenderImages(
+                        sorted,
+                        manualSlotPaths,
+                        progress);
+
+                Report(
+                    progress,
+                    "[COLLAGE] Manual arrangement: " +
+                    renderImages.Count(i => i != null && !string.IsNullOrWhiteSpace(i.Path)) +
+                    " assigned image(s) across " +
+                    (int)Math.Ceiling(renderImages.Count / (double)(gridSize * gridSize)) +
+                    " page(s).");
+            }
+
             if (outputType.Equals("PDF", StringComparison.OrdinalIgnoreCase))
             {
                 GeneratePdf(
-                    sorted,
+                    renderImages,
                     outputPath,
                     gridSize,
                     landscape,
                     showFilename,
                     drawBorders,
-                    progress);
+                    progress,
+                    manualCaptions,
+                    manualCustomNames,
+                    manualDisplayMode);
             }
             else if (outputType.Equals("Word", StringComparison.OrdinalIgnoreCase))
             {
@@ -130,12 +160,101 @@ namespace NPPLPrintMaster
 
             return new CollageGenerationResult
             {
-                ImageCount = sorted.Count,
+                ImageCount =
+                    manualSlotPaths == null
+                        ? sorted.Count
+                        : renderImages.Count(i => i != null && !string.IsNullOrWhiteSpace(i.Path)),
                 UniqueSizeCount = sizeCounts.Count,
                 MostCommonSize = mostCommon.Key,
                 MostCommonCount = mostCommon.Value,
                 OutputPath = outputPath
             };
+        }
+
+        // Returns the same deterministic order used by the normal collage
+        // generator. The manual arrangement editor uses this so the first
+        // manual layout exactly matches the existing automatic layout.
+        public static List<string> GetDefaultOrderedImagePaths(
+            IList<string> imageFiles,
+            IProgress<string> progress = null)
+        {
+            List<CollageImageInfo> images =
+                ReadImageInformation(imageFiles, progress);
+
+            if (images.Count == 0)
+                return new List<string>();
+
+            Dictionary<string, int> sizeCounts =
+                images
+                    .GroupBy(i => i.SizeKey, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Count(),
+                        StringComparer.OrdinalIgnoreCase);
+
+            return images
+                .OrderByDescending(i => sizeCounts[i.SizeKey])
+                .ThenByDescending(i => i.Width)
+                .ThenByDescending(i => i.Height)
+                .ThenBy(
+                    i => System.IO.Path.GetFileName(i.Path),
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(i => i.Path)
+                .ToList();
+        }
+
+        private static List<CollageImageInfo> BuildManualRenderImages(
+            IList<CollageImageInfo> sorted,
+            IList<string> manualSlotPaths,
+            IProgress<string> progress)
+        {
+            Dictionary<string, CollageImageInfo> byPath =
+                sorted.ToDictionary(
+                    i => i.Path,
+                    i => i,
+                    StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> used =
+                new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            List<CollageImageInfo> result =
+                new List<CollageImageInfo>();
+
+            foreach (string path in manualSlotPaths)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    result.Add(null);
+                    continue;
+                }
+
+                CollageImageInfo info;
+
+                if (!byPath.TryGetValue(path, out info))
+                {
+                    Report(
+                        progress,
+                        "[COLLAGE] Manual layout skipped missing image: " +
+                        System.IO.Path.GetFileName(path));
+                    result.Add(null);
+                    continue;
+                }
+
+                if (!used.Add(path))
+                {
+                    Report(
+                        progress,
+                        "[COLLAGE] Manual layout ignored duplicate image: " +
+                        System.IO.Path.GetFileName(path));
+                    result.Add(null);
+                    continue;
+                }
+
+                result.Add(info);
+            }
+
+            return result;
         }
 
         private static List<CollageImageInfo> ReadImageInformation(
@@ -201,7 +320,10 @@ namespace NPPLPrintMaster
             bool landscape,
             bool showFilename,
             bool drawBorders,
-            IProgress<string> progress)
+            IProgress<string> progress,
+            IDictionary<string, string> captions,
+            IDictionary<string, string> customNames,
+            string displayMode)
         {
             const double a4WidthInches = 8.2677165354;
             const double a4HeightInches = 11.6929133858;
@@ -221,6 +343,15 @@ namespace NPPLPrintMaster
 
             double pageHeightPoints =
                 (landscape ? a4WidthInches : a4HeightInches) * 72.0;
+
+            bool showCaption =
+                !string.Equals(displayMode, "None", StringComparison.OrdinalIgnoreCase) &&
+                (showFilename ||
+                 string.Equals(displayMode, "Remark", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(displayMode, "Both", StringComparison.OrdinalIgnoreCase) ||
+                 (captions != null &&
+                  captions.Any(
+                      p => !string.IsNullOrWhiteSpace(p.Value))));
 
             int perPage = gridSize * gridSize;
             List<byte[]> jpegPages = new List<byte[]>();
@@ -260,8 +391,11 @@ namespace NPPLPrintMaster
                             images,
                             pageIndex * perPage,
                             gridSize,
-                            showFilename,
-                            drawBorders);
+                            showCaption,
+                            drawBorders,
+                            captions,
+                            customNames,
+                            displayMode);
                     }
 
                     jpegPages.Add(
@@ -300,7 +434,10 @@ namespace NPPLPrintMaster
             int startIndex,
             int gridSize,
             bool showFilename,
-            bool drawBorders)
+            bool drawBorders,
+            IDictionary<string, string> captions,
+            IDictionary<string, string> customNames,
+            string displayMode)
         {
             int outerMargin =
                 (int)Math.Round(20.0 / 72.0 * PdfDpi);
@@ -308,10 +445,32 @@ namespace NPPLPrintMaster
             int innerMargin =
                 (int)Math.Round(10.0 / 72.0 * PdfDpi);
 
+            bool showOriginalFilename =
+                string.Equals(displayMode, "Filename", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(displayMode, "Both", StringComparison.OrdinalIgnoreCase);
+            bool showRemark =
+                string.Equals(displayMode, "Remark", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(displayMode, "Both", StringComparison.OrdinalIgnoreCase);
+
+            bool hasAnyRemark =
+                captions != null &&
+                captions.Any(
+                    p => !string.IsNullOrWhiteSpace(p.Value));
+
+            int captionLineHeight =
+                (int)Math.Round(16.0 / 72.0 * PdfDpi);
+
             int filenameHeight =
-                showFilename
-                    ? (int)Math.Round(18.0 / 72.0 * PdfDpi)
+                showOriginalFilename
+                    ? captionLineHeight
                     : 0;
+            int remarkHeight =
+                showRemark
+                    ? captionLineHeight
+                    : 0;
+
+            int captionAreaHeight =
+                filenameHeight + remarkHeight;
 
             int usableWidth =
                 pageWidth - (outerMargin * 2);
@@ -376,10 +535,17 @@ namespace NPPLPrintMaster
                                 1,
                                 cell.Height -
                                 (innerMargin * 2) -
-                                filenameHeight));
+                                captionAreaHeight));
 
                     CollageImageInfo info =
                         images[imageIndex];
+
+                    if (info == null ||
+                        string.IsNullOrWhiteSpace(info.Path))
+                    {
+                        // Manual layouts may intentionally leave cells empty.
+                        continue;
+                    }
 
                     try
                     {
@@ -408,40 +574,72 @@ namespace NPPLPrintMaster
                                 GraphicsUnit.Pixel);
                         }
 
-                        if (showFilename)
+                        string remark = null;
+
+                        if (customNames != null)
+                            customNames.TryGetValue(info.Path, out remark);
+
+                        if (string.IsNullOrWhiteSpace(remark) &&
+                            captions != null)
                         {
-                            float filenameGap =
+                            captions.TryGetValue(info.Path, out remark);
+                        }
+
+                        if (string.IsNullOrWhiteSpace(remark))
+                        {
+                            remark =
+                                System.IO.Path.GetFileNameWithoutExtension(
+                                    info.Path);
+                        }
+
+                        bool drawFilename = showOriginalFilename;
+                        bool drawRemark = showRemark;
+
+                        // The filename line is always the original source
+                        // filename. The editable custom remark is independent
+                        // and is shown on the second line when selected.
+                        string displayFilename =
+                            System.IO.Path.GetFileNameWithoutExtension(
+                                info.Path);
+
+                        if (drawFilename || drawRemark)
+                        {
+                            float textY =
+                                cell.Bottom -
+                                captionAreaHeight +
                                 Math.Max(
                                     2f,
                                     (float)Math.Round(
-                                        3.0 / 72.0 * PdfDpi));
+                                        2.0 / 72.0 * PdfDpi));
 
-                            float textY =
-                                drawRect.Bottom +
-                                filenameGap;
+                            if (drawFilename)
+                            {
+                                g.DrawString(
+                                    displayFilename,
+                                    filenameFont,
+                                    textBrush,
+                                    new RectangleF(
+                                        cell.X,
+                                        textY,
+                                        cell.Width,
+                                        filenameHeight),
+                                    centerText);
+                                textY += filenameHeight;
+                            }
 
-                            float maxTextY =
-                                cell.Bottom -
-                                innerMargin -
-                                filenameHeight;
-
-                            if (textY > maxTextY)
-                                textY = maxTextY;
-
-                            RectangleF textArea =
-                                new RectangleF(
-                                    cell.X + 4,
-                                    textY,
-                                    cell.Width - 8,
-                                    filenameHeight);
-
-                            g.DrawString(
-                                System.IO.Path.GetFileNameWithoutExtension(
-                                    info.Path),
-                                filenameFont,
-                                textBrush,
-                                textArea,
-                                centerText);
+                            if (drawRemark)
+                            {
+                                g.DrawString(
+                                    remark,
+                                    filenameFont,
+                                    textBrush,
+                                    new RectangleF(
+                                        cell.X,
+                                        textY,
+                                        cell.Width,
+                                        remarkHeight),
+                                    centerText);
+                            }
                         }
                     }
                     catch
@@ -813,7 +1011,10 @@ namespace NPPLPrintMaster
                                 pageIndex * perPage,
                                 gridSize,
                                 showFilename,
-                                drawBorders);
+                                drawBorders,
+                                null,
+                                null,
+                                "Filename");
                         }
 
                         using (MemoryStream imageStream =

@@ -10,11 +10,12 @@ namespace NPPLPrintMaster
 {
     public partial class Form1 : Form
     {
-        private async void BtnGenerateCollage_Click(object sender, EventArgs e)
+        private List<string> GetCurrentCollageFiles()
         {
             List<string> filesToProcess = new List<string>();
 
-            if (selectedCollageFiles != null && selectedCollageFiles.Length > 0)
+            if (selectedCollageFiles != null &&
+                selectedCollageFiles.Length > 0)
             {
                 filesToProcess.AddRange(
                     selectedCollageFiles.Where(IsSupportedCollageImage));
@@ -39,19 +40,74 @@ namespace NPPLPrintMaster
                 catch (Exception ex)
                 {
                     MessageBox.Show(
-                        "Unable to scan the selected folder.\n\n" + ex.Message,
+                        "Unable to scan the selected folder.\n\n" +
+                        ex.Message,
                         "Collage Input Error",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Error);
-                    return;
+                    return new List<string>();
                 }
             }
 
-            filesToProcess =
-                filesToProcess
-                    .Where(File.Exists)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+            return filesToProcess
+                .Where(File.Exists)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void UpdateCollageArrangementButtons()
+        {
+            if (btnArrangeCollage == null)
+                return;
+
+            bool isPdf =
+                cmbCollageOutputType != null &&
+                cmbCollageOutputType.SelectedItem != null &&
+                string.Equals(
+                    cmbCollageOutputType.SelectedItem.ToString(),
+                    "PDF",
+                    StringComparison.OrdinalIgnoreCase);
+
+            bool hasSource =
+                (selectedCollageFiles != null &&
+                 selectedCollageFiles.Length > 0) ||
+                !string.IsNullOrWhiteSpace(selectedCollageFolder);
+
+            btnArrangeCollage.Enabled =
+                isPdf && hasSource;
+
+            btnClearCollageArrangement.Enabled =
+                isPdf && manualCollageSlots != null;
+
+            btnArrangeCollage.Text =
+                isPdf && manualCollageSlots != null
+                    ? "✓ Edit Arrangement"
+                    : "🖼  Arrange Images...";
+
+            btnClearCollageArrangement.Text =
+                manualCollageSlots == null
+                    ? "↺  Automatic"
+                    : "↺  Reset Automatic";
+        }
+
+        private void BtnArrangeCollage_Click(object sender, EventArgs e)
+        {
+            if (cmbCollageOutputType.SelectedItem == null ||
+                !string.Equals(
+                    cmbCollageOutputType.SelectedItem.ToString(),
+                    "PDF",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show(
+                    "Manual image arrangement is available for PDF output.",
+                    "PDF Arrangement",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            List<string> filesToProcess =
+                GetCurrentCollageFiles();
 
             if (filesToProcess.Count == 0)
             {
@@ -61,6 +117,176 @@ namespace NPPLPrintMaster
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
                 return;
+            }
+
+            int gridSize =
+                cmbCollageGrid.SelectedIndex + 1;
+
+            List<string> defaultOrder =
+                ImageCollageEngine.GetDefaultOrderedImagePaths(
+                    filesToProcess);
+
+            if (defaultOrder.Count == 0)
+            {
+                MessageBox.Show(
+                    "No readable images were found.",
+                    "No Images",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            List<string> initialSlots =
+                manualCollageSlots == null
+                    ? defaultOrder
+                    : manualCollageSlots;
+
+            bool landscape =
+                cmbCollageOrientation.SelectedItem != null &&
+                string.Equals(
+                    cmbCollageOrientation.SelectedItem.ToString(),
+                    "Landscape",
+                    StringComparison.OrdinalIgnoreCase);
+
+            using (CollageArrangementForm form =
+                new CollageArrangementForm(
+                    defaultOrder,
+                    gridSize,
+                    landscape,
+                    currentSettings,
+                    initialSlots,
+                    manualCollageCaptions,
+                    manualCollageCustomNames))
+            {
+                if (form.ShowDialog(this) == DialogResult.OK)
+                {
+                    manualCollageSlots =
+                        form.ResultSlots == null
+                            ? null
+                            : new List<string>(form.ResultSlots);
+
+                    manualCollageCaptions =
+                        form.ResultCaptions == null
+                            ? null
+                            : new Dictionary<string, string>(
+                                form.ResultCaptions,
+                                StringComparer.OrdinalIgnoreCase);
+
+                    manualCollageCustomNames =
+                        form.ResultCustomNames == null
+                            ? null
+                            : new Dictionary<string, string>(
+                                form.ResultCustomNames,
+                                StringComparer.OrdinalIgnoreCase);
+
+                    manualCollageDisplayMode =
+                        string.IsNullOrWhiteSpace(form.ResultDisplayMode)
+                            ? "Both"
+                            : form.ResultDisplayMode;
+
+                    UpdateCollageArrangementButtons();
+
+                    int assigned =
+                        manualCollageSlots == null
+                            ? 0
+                            : manualCollageSlots.Count(
+                                p => !string.IsNullOrWhiteSpace(p));
+
+                    rtbFormatConsole.AppendText(
+                        "[COLLAGE] Manual arrangement saved: " +
+                        assigned +
+                        " image(s) assigned to layout cells." +
+                        Environment.NewLine);
+                }
+            }
+        }
+
+        private static bool ManualArrangementMatchesSource(
+            IList<string> sourceFiles,
+            IList<string> slots)
+        {
+            if (slots == null)
+                return true;
+
+            HashSet<string> source =
+                new HashSet<string>(
+                    sourceFiles,
+                    StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> arranged =
+                new HashSet<string>(
+                    slots.Where(
+                        p => !string.IsNullOrWhiteSpace(p)),
+                    StringComparer.OrdinalIgnoreCase);
+
+            return source.SetEquals(arranged);
+        }
+
+        private async void BtnGenerateCollage_Click(object sender, EventArgs e)
+        {
+            List<string> filesToProcess = GetCurrentCollageFiles();
+
+            if (filesToProcess.Count == 0)
+            {
+                MessageBox.Show(
+                    "Please select image files or a folder containing supported images.",
+                    "No Images",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (manualCollageSlots != null &&
+                cmbCollageOutputType.SelectedItem != null &&
+                string.Equals(
+                    cmbCollageOutputType.SelectedItem.ToString(),
+                    "PDF",
+                    StringComparison.OrdinalIgnoreCase) &&
+                !ManualArrangementMatchesSource(
+                    filesToProcess,
+                    manualCollageSlots))
+            {
+                MessageBox.Show(
+                    "The image source has changed since the manual arrangement was created.\n\n" +
+                    "Please open 'Edit Arrangement' and save the arrangement again before creating the PDF.",
+                    "Manual Arrangement Needs Update",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (manualCollageSlots != null &&
+                cmbCollageOutputType.SelectedItem != null &&
+                string.Equals(
+                    cmbCollageOutputType.SelectedItem.ToString(),
+                    "PDF",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                HashSet<string> placedPaths =
+                    new HashSet<string>(
+                        manualCollageSlots.Where(
+                            p => !string.IsNullOrWhiteSpace(p)),
+                        StringComparer.OrdinalIgnoreCase);
+
+                int unplacedCount =
+                    filesToProcess.Count(
+                        p => !placedPaths.Contains(p));
+
+                if (unplacedCount > 0)
+                {
+                    DialogResult continueResult =
+                        MessageBox.Show(
+                            unplacedCount +
+                            " image(s) are still unplaced.\n\n" +
+                            "They will not appear in the PDF.\n\n" +
+                            "Do you want to create the PDF anyway?",
+                            "Unplaced Images",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Warning);
+
+                    if (continueResult != DialogResult.Yes)
+                        return;
+                }
             }
 
             string outputFolder =
@@ -172,7 +398,29 @@ namespace NPPLPrintMaster
                             landscape,
                             chkCollageShowFilename.Checked,
                             chkCollageBorders.Checked,
-                            progress));
+                            progress,
+                            outputType.Equals(
+                                "PDF",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? manualCollageSlots
+                                : null,
+                            outputType.Equals(
+                                "PDF",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? manualCollageCaptions
+                                : null,
+                            outputType.Equals(
+                                "PDF",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? manualCollageCustomNames
+                                : null,
+                            outputType.Equals(
+                                "PDF",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? (string.IsNullOrWhiteSpace(manualCollageDisplayMode)
+                                    ? "Both"
+                                    : manualCollageDisplayMode)
+                                : "Filename"));
 
                 rtbFormatConsole.AppendText(
                     "--------------------------------------------------\n");
