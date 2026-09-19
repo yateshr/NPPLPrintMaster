@@ -1,13 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace NPPLPrintMaster
 {
     public static class BarTenderEngine
     {
-        public static async Task<int> ExtractImages(
+        public static Task<int> ExtractImages(
             List<string> filesToProcess,
             string outputFolder,
             string format,
@@ -15,103 +17,229 @@ namespace NPPLPrintMaster
             bool preserveSourceFolders = false,
             string sourceRoot = null)
         {
-            return await Task.Run(() =>
-            {
-                int count = 0;
-                dynamic btApp = null;
+            // BarTender 10 is a COM/desktop application. Run the automation
+            // session on a dedicated STA thread instead of Task.Run's normal
+            // thread-pool (MTA) thread.
+            TaskCompletionSource<int> completion =
+                new TaskCompletionSource<int>();
 
-                try
-                {
-                    Directory.CreateDirectory(outputFolder);
-
-                    btApp = Activator.CreateInstance(
-                        Type.GetTypeFromProgID("BarTender.Application"));
-
-                    btApp.Visible = true;
-
-                    foreach (string file in filesToProcess)
+            Thread worker =
+                new Thread(
+                    () =>
                     {
-                        dynamic btFormat = null;
-
                         try
                         {
-                            string targetDirectory =
-                                GetTargetDirectory(
-                                    file,
+                            int count =
+                                ExtractImagesSta(
+                                    filesToProcess,
                                     outputFolder,
+                                    format,
+                                    dpi,
                                     preserveSourceFolders,
                                     sourceRoot);
 
-                            Directory.CreateDirectory(targetDirectory);
-
-                            string outImg =
-                                Path.Combine(
-                                    targetDirectory,
-                                    Path.GetFileNameWithoutExtension(file) +
-                                    "." +
-                                    format);
-
-                            btFormat =
-                                btApp.Formats.Open(
-                                    file,
-                                    false,
-                                    "");
-
-                            if (btFormat == null)
-                                continue;
-
-                            btFormat.ExportToFile(
-                                outImg,
-                                format,
-                                4,
-                                dpi,
-                                2);
-
-                            count++;
+                            completion.SetResult(count);
                         }
-                        catch
+                        catch (Exception ex)
                         {
-                            // Keep batch processing if one BTW file fails.
+                            completion.SetException(ex);
+                        }
+                    });
+
+            worker.IsBackground = true;
+            worker.Name = "NPPLPrintMaster.BarTender";
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+
+            return completion.Task;
+        }
+
+        private static int ExtractImagesSta(
+            List<string> filesToProcess,
+            string outputFolder,
+            string format,
+            int dpi,
+            bool preserveSourceFolders,
+            string sourceRoot)
+        {
+            int count = 0;
+
+            object btAppObject = null;
+            object btFormatsObject = null;
+
+            dynamic btApp = null;
+            dynamic btFormats = null;
+
+            try
+            {
+                Directory.CreateDirectory(outputFolder);
+
+                Type barTenderType =
+                    Type.GetTypeFromProgID(
+                        "BarTender.Application");
+
+                if (barTenderType == null)
+                {
+                    throw new InvalidOperationException(
+                        "BarTender.Application COM automation is not registered.");
+                }
+
+                btAppObject =
+                    Activator.CreateInstance(
+                        barTenderType);
+
+                btApp = btAppObject;
+
+                // Extraction does not need the BarTender UI. Keeping it hidden
+                // also avoids leaving an unnecessary interactive window alive.
+                btApp.Visible = false;
+
+                // Hold the Formats collection explicitly so its COM reference
+                // can be released deterministically at the end of the batch.
+                btFormatsObject = btApp.Formats;
+                btFormats = btFormatsObject;
+
+                foreach (string file in filesToProcess)
+                {
+                    object btFormatObject = null;
+                    dynamic btFormat = null;
+
+                    try
+                    {
+                        string targetDirectory =
+                            GetTargetDirectory(
+                                file,
+                                outputFolder,
+                                preserveSourceFolders,
+                                sourceRoot);
+
+                        Directory.CreateDirectory(
+                            targetDirectory);
+
+                        string outImg =
+                            Path.Combine(
+                                targetDirectory,
+                                Path.GetFileNameWithoutExtension(file) +
+                                "." +
+                                format);
+
+                        btFormatObject =
+                            btFormats.Open(
+                                file,
+                                false,
+                                "");
+
+                        btFormat = btFormatObject;
+
+                        if (btFormat == null)
                             continue;
-                        }
-                        finally
+
+                        btFormat.ExportToFile(
+                            outImg,
+                            format,
+                            4,
+                            dpi,
+                            2);
+
+                        count++;
+                    }
+                    catch
+                    {
+                        // Keep batch processing if one BTW file fails.
+                        continue;
+                    }
+                    finally
+                    {
+                        if (btFormat != null)
                         {
-                            if (btFormat != null)
+                            try
                             {
-                                try
-                                {
-                                    btFormat.Close(2);
-                                }
-                                catch
-                                {
-                                }
+                                btFormat.Close(2);
+                            }
+                            catch
+                            {
                             }
                         }
+
+                        ReleaseComObject(
+                            btFormatObject);
+
+                        btFormat = null;
+                        btFormatObject = null;
                     }
                 }
-                catch (Exception ex)
+            }
+            catch (Exception ex)
+            {
+                throw new Exception(
+                    "BarTender Error: " +
+                    ex.Message,
+                    ex);
+            }
+            finally
+            {
+                // Release the Formats collection before shutting down the
+                // application. Every individual Format has already been closed
+                // and released inside the loop above.
+                ReleaseComObject(
+                    btFormatsObject);
+
+                btFormats = null;
+                btFormatsObject = null;
+
+                if (btApp != null)
                 {
-                    throw new Exception(
-                        "BarTender Error: " +
-                        ex.Message,
-                        ex);
-                }
-                finally
-                {
-                    if (btApp != null)
+                    try
                     {
-                        try
-                        {
-                            btApp.Quit(2);
-                        }
-                        catch
-                        {
-                        }
+                        btApp.Quit(2);
+                    }
+                    catch
+                    {
                     }
                 }
 
-                return count;
-            });
+                ReleaseComObject(
+                    btAppObject);
+
+                btApp = null;
+                btAppObject = null;
+
+                // Dynamic COM calls can create short-lived RCWs internally.
+                // Force finalization once at the end of the complete batch so
+                // BarTender is not left "busy" after NPPL has finished.
+                try
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                }
+                catch
+                {
+                }
+            }
+
+            return count;
+        }
+
+        private static void ReleaseComObject(
+            object comObject)
+        {
+            if (comObject == null)
+                return;
+
+            try
+            {
+                if (Marshal.IsComObject(comObject))
+                {
+                    Marshal.FinalReleaseComObject(
+                        comObject);
+                }
+            }
+            catch
+            {
+                // COM cleanup must never mask the extraction result.
+            }
         }
 
         private static string GetTargetDirectory(
