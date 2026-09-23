@@ -358,7 +358,7 @@ namespace NPPLPrintMaster
 
         private Panel pnlContent, pnlSidebar, pnlHeader, pnlLogo;
         private Label lblHeaderTitle, lblAppTitle, lblAppSub;
-        private Panel pageHome, pageExtract, pageFormat, pageCompose, pageSettings;
+        private Panel pageHome, pageExtract, pageFormat, pageCompose, pageBtwLibrary, pageSettings;
         private Button activeNavButton;
         private List<Button> navButtons = new List<Button>();
         private Splitter sidebarSplitter;
@@ -519,8 +519,9 @@ namespace NPPLPrintMaster
             pageExtract = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
             pageFormat = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
             pageCompose = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
+            pageBtwLibrary = new Panel { Size = new Size(1200, 900), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
             pageSettings = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false };
-            pnlContent.Controls.AddRange(new Control[] { pageHome, pageExtract, pageFormat, pageCompose, pageSettings });
+            pnlContent.Controls.AddRange(new Control[] { pageHome, pageExtract, pageFormat, pageCompose, pageBtwLibrary, pageSettings });
 
             Label lblWelcome = new Label { Text = "Workflow Automation Suite", Font = new Font("Segoe UI", 14), Location = new Point(0, 0), AutoSize = true };
             Label lblInstr = new Label { Text = "Use the sidebar on the left to navigate between extraction, formatting, and job card building.\n\nYou can drag the line next to the sidebar to shrink or expand it.", Font = new Font("Segoe UI", 11), Location = new Point(0, 40), AutoSize = true };
@@ -1281,6 +1282,7 @@ namespace NPPLPrintMaster
             // Optional Smart Image Finder. Existing manual lanes above stay
             // exactly as they are and remain available at all times.
             BuildSmartImageFinder();
+            BuildBtwImageLibrary();
 
             GroupBox grpTheme = new GroupBox
             {
@@ -1447,7 +1449,8 @@ namespace NPPLPrintMaster
             navButtons.Add(CreateNavButton("🏠 Dashboard Home", navY)); navY += 50;
             navButtons.Add(CreateNavButton("📂 1. Extraction", navY)); navY += 50;
             navButtons.Add(CreateNavButton("🎨 2. Formatting", navY)); navY += 50;
-            navButtons.Add(CreateNavButton("🖨️ 3. Quick Job Card", navY)); navY += 70;
+            navButtons.Add(CreateNavButton("🖨️ 3. Quick Job Card", navY)); navY += 50;
+            navButtons.Add(CreateNavButton("🖼️ 4. BTW Image Library", navY)); navY += 70;
             Button btnNavFreeform = CreateNavButton("🚀 Pro Freeform Builder", navY); navButtons.Add(btnNavFreeform); navY += 70;
             Button btnNavSettings = CreateNavButton("⚙️ Settings", navY); navButtons.Add(btnNavSettings);
             pnlSidebar.Controls.AddRange(navButtons.ToArray());
@@ -1456,6 +1459,7 @@ namespace NPPLPrintMaster
             navButtons[1].Click += (s, e) => SwitchPage(pageExtract, navButtons[1], "Step 1: BarTender Extraction");
             navButtons[2].Click += (s, e) => SwitchPage(pageFormat, navButtons[2], "Step 2: Image Formatting");
             navButtons[3].Click += (s, e) => SwitchPage(pageCompose, navButtons[3], "Step 3: Quick Job Card");
+            navButtons[4].Click += (s, e) => SwitchPage(pageBtwLibrary, navButtons[4], "Step 4: BTW Image Library");
             btnNavFreeform.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
             btnNavSettings.Click += (s, e) => SwitchPage(pageSettings, btnNavSettings, "Application Settings");
 
@@ -1485,7 +1489,7 @@ namespace NPPLPrintMaster
 
         private void SwitchPage(Panel targetPage, Button clickedButton, string headerTitle)
         {
-            pageHome.Visible = false; pageExtract.Visible = false; pageFormat.Visible = false; pageCompose.Visible = false; pageSettings.Visible = false;
+            pageHome.Visible = false; pageExtract.Visible = false; pageFormat.Visible = false; pageCompose.Visible = false; pageBtwLibrary.Visible = false; pageSettings.Visible = false;
             if (activeNavButton != null) { activeNavButton.BackColor = sidebarColor; activeNavButton.ForeColor = (sidebarColor.R > 200) ? Color.Black : Color.LightGray; }
             activeNavButton = clickedButton; activeNavButton.BackColor = activeColor; activeNavButton.ForeColor = Color.White;
             targetPage.Visible = true; targetPage.BringToFront(); lblHeaderTitle.Text = headerTitle;

@@ -124,10 +124,14 @@
   <ItemGroup>
     <Compile Include="AppearanceManager.cs" />
     <Compile Include="BarTenderEngine.cs" />
+    <Compile Include="BtwImageLibraryEngine.cs" />
     <Compile Include="BtwListReader.cs" />
     <Compile Include="CanvasItem.cs" />
     <Compile Include="DialogMemoryManager.cs" />
     <Compile Include="Form1.Appearance.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.BtwLibrary.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Form1.Collage.cs">
@@ -229,8 +233,11 @@
   <Import Project="..\packages\SkiaSharp.NativeAssets.macOS.3.119.2\build\net462\SkiaSharp.NativeAssets.macOS.targets" Condition="Exists('..\packages\SkiaSharp.NativeAssets.macOS.3.119.2\build\net462\SkiaSharp.NativeAssets.macOS.targets')" />
   <Import Project="..\packages\SkiaSharp.NativeAssets.Win32.3.119.2\build\net462\SkiaSharp.NativeAssets.Win32.targets" Condition="Exists('..\packages\SkiaSharp.NativeAssets.Win32.3.119.2\build\net462\SkiaSharp.NativeAssets.Win32.targets')" />
   <ItemGroup>
+    <PackageReference Include="System.Data.SQLite.Core">
+      <Version>1.0.119</Version>
+    </PackageReference>
     <PackageReference Include="ZXing.Net">
-      <Version>0.16.9</Version>
+      <Version>0.16.11</Version>
     </PackageReference>
   </ItemGroup>
 </Project>

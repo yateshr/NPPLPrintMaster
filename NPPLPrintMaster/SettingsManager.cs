@@ -23,6 +23,10 @@ namespace NPPLPrintMaster
         public string SmartProductImageFolder { get; set; } = "";
         public string SmartCartonImageFolder { get; set; } = "";
 
+        // BTW Image Library
+        public string BtwLibraryIncludeFolders { get; set; } = "";
+        public string BtwLibraryExcludeFolders { get; set; } = "";
+
         // Quick Job Card workflow
         public bool OpenJobCardDirectlyInFreeform { get; set; } = true;
     }
@@ -54,6 +58,8 @@ namespace NPPLPrintMaster
                         if (parts[0] == "LastJobCardSaveFolder") s.LastJobCardSaveFolder = parts[1];
                         if (parts[0] == "SmartProductImageFolder") s.SmartProductImageFolder = parts[1];
                         if (parts[0] == "SmartCartonImageFolder") s.SmartCartonImageFolder = parts[1];
+                        if (parts[0] == "BtwLibraryIncludeFolders") s.BtwLibraryIncludeFolders = parts[1];
+                        if (parts[0] == "BtwLibraryExcludeFolders") s.BtwLibraryExcludeFolders = parts[1];
                         if (parts[0] == "OpenJobCardDirectlyInFreeform" &&
                             bool.TryParse(parts[1], out bool directFreeform))
                             s.OpenJobCardDirectlyInFreeform = directFreeform;
@@ -82,6 +88,8 @@ namespace NPPLPrintMaster
                 sw.WriteLine($"LastJobCardSaveFolder={s.LastJobCardSaveFolder}");
                 sw.WriteLine($"SmartProductImageFolder={s.SmartProductImageFolder}");
                 sw.WriteLine($"SmartCartonImageFolder={s.SmartCartonImageFolder}");
+                sw.WriteLine($"BtwLibraryIncludeFolders={s.BtwLibraryIncludeFolders}");
+                sw.WriteLine($"BtwLibraryExcludeFolders={s.BtwLibraryExcludeFolders}");
                 sw.WriteLine($"OpenJobCardDirectlyInFreeform={s.OpenJobCardDirectlyInFreeform}");
             }
         }
