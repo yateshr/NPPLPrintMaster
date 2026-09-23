@@ -1,6 +1,15 @@
 using System;
-using System.Collections.Concurrent;
+#pragma warning disable IDE0270
+#pragma warning disable IDE0060
+#pragma warning disable IDE0059
+#pragma warning disable IDE0039
+#pragma warning disable IDE0038
+#pragma warning disable IDE0031
+#pragma warning disable IDE0019
+#pragma warning disable IDE0018
+#pragma warning disable IDE0017
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Data.SQLite;
 using System.Drawing;
 using System.IO;
@@ -30,65 +39,57 @@ namespace NPPLPrintMaster
 
     public sealed class BtwImageLibraryProgress
     {
+        public string Operation { get; set; }
         public int Processed { get; set; }
         public int Total { get; set; }
-        public int NewFiles { get; set; }
-        public int ChangedFiles { get; set; }
-        public int UnchangedFiles { get; set; }
-        public int ImagesCreated { get; set; }
+        public int Found { get; set; }
+        public int Created { get; set; }
+        public int Indexed { get; set; }
+        public int Detected { get; set; }
+        public int NotDetected { get; set; }
         public int Errors { get; set; }
+        public int Duplicates { get; set; }
         public string CurrentFile { get; set; }
-
-        public int ExtractionProcessed { get; set; }
-        public int ExtractionTotal { get; set; }
-        public int BarcodeProcessed { get; set; }
-        public int BarcodeTotal { get; set; }
-        public int ExistingImagesIndexed { get; set; }
+        public bool Completed { get; set; }
     }
 
     public sealed class BtwImageLibraryRefreshResult
     {
         public int TotalFiles { get; set; }
-        public int NewFiles { get; set; }
-        public int ChangedFiles { get; set; }
-        public int UnchangedFiles { get; set; }
-        public int RemovedFiles { get; set; }
+        public int IndexedFiles { get; set; }
         public int ImagesCreated { get; set; }
+        public int ImagesFailed { get; set; }
+        public int BarcodeProcessed { get; set; }
+        public int BarcodeDetected { get; set; }
+        public int BarcodeNotDetected { get; set; }
         public int Errors { get; set; }
         public int DuplicateBarcodes { get; set; }
-        public int ExistingImagesIndexed { get; set; }
-        public int BarcodeProcessed { get; set; }
     }
 
     /// <summary>
-    /// BTW Image Library engine.
+    /// Manual three-stage BTW library:
+    /// 1) Index BTW files only.
+    /// 2) Generate clean PNG images for indexed BTW files.
+    /// 3) Scan all indexed images for barcodes.
     ///
-    /// Architecture:
-    ///   1. Fast filesystem scan + SQLite incremental comparison.
-    ///   2. One BarTender COM instance for extraction only.
-    ///   3. Barcode decoding runs in parallel worker threads.
-    ///   4. A single SQLite writer queue prevents write contention.
-    ///
-    /// BarTender COM is never shared between threads.
+    /// There is intentionally NO incremental decision-making in this version.
+    /// BarTender uses exactly one COM instance on one thread.
+    /// Barcode decoding is parallel and does not use BarTender COM.
     /// </summary>
     public sealed class BtwImageLibraryEngine
     {
-        private const int DefaultBarcodeWorkerCount = 4;
-        private const int MaxBarcodeWorkerCount = 8;
-        private const int SqliteBatchSize = 100;
+        private const int DefaultBarcodeWorkers = 4;
+        private const int MaxBarcodeWorkers = 8;
 
-        private readonly object syncRoot = new object();
         private readonly string databaseFile;
         private readonly string imageFolder;
         private readonly string connectionString;
 
-        private int cachedImageCount;
-        private int cachedErrorCount;
-        private int cachedMissingImageCount;
+        private int imageCount;
+        private int errorCount;
+        private int missingImageCount;
 
-        public BtwImageLibraryEngine(
-            string indexFile,
-            string imageFolder)
+        public BtwImageLibraryEngine(string indexFile, string imageFolder)
         {
             databaseFile = Path.ChangeExtension(indexFile, ".db");
             this.imageFolder = imageFolder;
@@ -100,132 +101,95 @@ namespace NPPLPrintMaster
             Directory.CreateDirectory(imageFolder);
 
             connectionString =
-                "Data Source=" +
-                databaseFile +
+                "Data Source=" + databaseFile +
                 ";Version=3;foreign keys=true;busy_timeout=30000;";
 
             InitializeDatabase();
             RebuildStatistics();
         }
 
-        public int BarcodeWorkerCount { get; set; } =
-            DefaultBarcodeWorkerCount;
+        public int BarcodeWorkerCount { get; set; } = DefaultBarcodeWorkers;
 
         public int Count
         {
             get
             {
                 using (SQLiteConnection c = OpenConnection())
-                using (SQLiteCommand cmd =
-                    new SQLiteCommand(
-                        "SELECT COUNT(*) FROM BtwTemplates;",
-                        c))
+                using (SQLiteCommand cmd = new SQLiteCommand(
+                    "SELECT COUNT(*) FROM BtwTemplates;", c))
                     return Convert.ToInt32(cmd.ExecuteScalar());
             }
         }
 
-        public int ImageCount { get { return cachedImageCount; } }
-        public int ErrorCount { get { return cachedErrorCount; } }
-        public int MissingImageCount { get { return cachedMissingImageCount; } }
+        public int ImageCount { get { return imageCount; } }
+        public int ErrorCount { get { return errorCount; } }
+        public int MissingImageCount { get { return missingImageCount; } }
 
         public int DuplicateBarcodeCount
         {
             get
             {
                 using (SQLiteConnection c = OpenConnection())
-                using (SQLiteCommand cmd =
-                    new SQLiteCommand(
-                        "SELECT COUNT(*) FROM (" +
-                        "SELECT Barcode FROM BtwTemplates " +
-                        "WHERE Barcode IS NOT NULL AND Barcode <> '' " +
-                        "GROUP BY Barcode HAVING COUNT(*) > 1);",
-                        c))
+                using (SQLiteCommand cmd = new SQLiteCommand(
+                    "SELECT COUNT(*) FROM (" +
+                    "SELECT Barcode FROM BtwTemplates " +
+                    "WHERE Barcode IS NOT NULL AND Barcode<>'' " +
+                    "GROUP BY Barcode HAVING COUNT(*)>1);", c))
                     return Convert.ToInt32(cmd.ExecuteScalar());
             }
         }
 
-        public List<BtwImageLibraryRecord> Search(
-            string query,
-            string statusFilter)
+        public List<BtwImageLibraryRecord> Search(string query, string statusFilter)
         {
             query = (query ?? "").Trim();
-            statusFilter =
-                string.IsNullOrWhiteSpace(statusFilter)
-                    ? "All"
-                    : statusFilter;
+            statusFilter = string.IsNullOrWhiteSpace(statusFilter) ? "All" : statusFilter;
 
-            List<BtwImageLibraryRecord> result =
-                new List<BtwImageLibraryRecord>();
+            List<BtwImageLibraryRecord> list = new List<BtwImageLibraryRecord>();
 
             using (SQLiteConnection c = OpenConnection())
             using (SQLiteCommand cmd = c.CreateCommand())
             {
                 StringBuilder sql = new StringBuilder(
-                    "SELECT FilePath,FileName,ProductName,Barcode," +
-                    "ImagePath,Status,ErrorMessage,FileSize," +
-                    "LastWriteTicks,LastProcessedUtc " +
-                    "FROM BtwTemplates WHERE 1=1 ");
+                    "SELECT FilePath,FileName,ProductName,Barcode,ImagePath," +
+                    "Status,ErrorMessage,FileSize,LastWriteTicks,LastProcessedUtc " +
+                    "FROM BtwTemplates WHERE 1=1");
 
-                if (!string.Equals(
-                    statusFilter,
-                    "All",
-                    StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(statusFilter, "All", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (string.Equals(
-                        statusFilter,
-                        "Missing Image",
-                        StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(statusFilter, "Missing Image", StringComparison.OrdinalIgnoreCase))
                     {
-                        sql.Append(
-                            "AND (ImagePath IS NULL OR ImagePath='' " +
-                            "OR NOT EXISTS " +
-                            "(SELECT 1 WHERE 1=1)) ");
+                        // Missing-image filtering is performed after reading the
+                        // rows because SQLite cannot test the local filesystem.
+                        // Do not append SQL here; the base query already contains
+                        // WHERE 1=1.
                     }
-                    else if (string.Equals(
-                        statusFilter,
-                        "Duplicate Barcode",
-                        StringComparison.OrdinalIgnoreCase))
+                    else if (string.Equals(statusFilter, "Duplicate Barcode", StringComparison.OrdinalIgnoreCase))
                     {
-                        sql.Append(
-                            "AND Barcode IS NOT NULL AND Barcode<>'' " +
-                            "AND Barcode IN (" +
-                            "SELECT Barcode FROM BtwTemplates " +
-                            "WHERE Barcode IS NOT NULL AND Barcode<>'' " +
-                            "GROUP BY Barcode HAVING COUNT(*)>1) ");
+                        sql.Append("AND Barcode IS NOT NULL AND Barcode<>'' AND Barcode IN (" +
+                                   "SELECT Barcode FROM BtwTemplates " +
+                                   "WHERE Barcode IS NOT NULL AND Barcode<>'' " +
+                                   "GROUP BY Barcode HAVING COUNT(*)>1) ");
                     }
-                    else if (string.Equals(
-                        statusFilter,
-                        "Ready",
-                        StringComparison.OrdinalIgnoreCase))
+                    else if (string.Equals(statusFilter, "Ready", StringComparison.OrdinalIgnoreCase))
                     {
-                        sql.Append(
-                            "AND Status LIKE 'Ready%' ");
+                        sql.Append("AND Status='Ready' ");
                     }
                     else
                     {
                         sql.Append("AND Status=@status ");
-                        cmd.Parameters.AddWithValue(
-                            "@status",
-                            statusFilter);
+                        cmd.Parameters.AddWithValue("@status", statusFilter);
                     }
                 }
 
                 if (!string.IsNullOrWhiteSpace(query))
                 {
-                    sql.Append(
-                        "AND (Barcode LIKE @q OR " +
-                        "ProductName LIKE @q OR " +
-                        "FileName LIKE @q OR " +
-                        "FilePath LIKE @q) ");
-
-                    cmd.Parameters.AddWithValue(
-                        "@q",
-                        "%" + query + "%");
+                    sql.Append("AND (Barcode LIKE @q OR ProductName LIKE @q OR " +
+                               "FileName LIKE @q OR FilePath LIKE @q) ");
+                    cmd.Parameters.AddWithValue("@q", "%" + query + "%");
                 }
 
-                sql.Append(
-                    "ORDER BY ProductName COLLATE NOCASE, " +
-                    "FilePath COLLATE NOCASE LIMIT 1000;");
+                sql.Append(" ORDER BY ProductName COLLATE NOCASE, " +
+                           "FileName COLLATE NOCASE LIMIT 5000;");
 
                 cmd.CommandText = sql.ToString();
 
@@ -233,26 +197,22 @@ namespace NPPLPrintMaster
                 {
                     while (r.Read())
                     {
-                        BtwImageLibraryRecord record =
-                            ReadRecord(r);
+                        BtwImageLibraryRecord record = ReadRecord(r);
 
-                        if (string.Equals(
-                            statusFilter,
-                            "Missing Image",
+                        if (string.Equals(statusFilter, "Missing Image",
                             StringComparison.OrdinalIgnoreCase))
                         {
-                            if (!string.IsNullOrWhiteSpace(
-                                record.ImagePath) &&
+                            if (!string.IsNullOrWhiteSpace(record.ImagePath) &&
                                 File.Exists(record.ImagePath))
                                 continue;
                         }
 
-                        result.Add(record);
+                        list.Add(record);
                     }
                 }
             }
 
-            return result;
+            return list;
         }
 
         public BtwImageLibraryRecord Get(string path)
@@ -264,11 +224,9 @@ namespace NPPLPrintMaster
             using (SQLiteCommand cmd = c.CreateCommand())
             {
                 cmd.CommandText =
-                    "SELECT FilePath,FileName,ProductName,Barcode," +
-                    "ImagePath,Status,ErrorMessage,FileSize," +
-                    "LastWriteTicks,LastProcessedUtc " +
+                    "SELECT FilePath,FileName,ProductName,Barcode,ImagePath," +
+                    "Status,ErrorMessage,FileSize,LastWriteTicks,LastProcessedUtc " +
                     "FROM BtwTemplates WHERE FilePath=@p;";
-
                 cmd.Parameters.AddWithValue("@p", path);
 
                 using (SQLiteDataReader r = cmd.ExecuteReader())
@@ -278,404 +236,176 @@ namespace NPPLPrintMaster
 
         public void ClearIndex()
         {
-            lock (syncRoot)
+            using (SQLiteConnection c = OpenConnection())
+            using (SQLiteCommand cmd = c.CreateCommand())
             {
-                using (SQLiteConnection c = OpenConnection())
-                using (SQLiteCommand cmd = c.CreateCommand())
-                {
-                    cmd.CommandText = "DELETE FROM BtwTemplates;";
-                    cmd.ExecuteNonQuery();
-
-                    cmd.CommandText =
-                        "DELETE FROM sqlite_sequence " +
-                        "WHERE name='BtwTemplates';";
-                    try { cmd.ExecuteNonQuery(); } catch { }
-                }
+                cmd.CommandText = "DELETE FROM BtwTemplates;";
+                cmd.ExecuteNonQuery();
             }
 
             RebuildStatistics();
         }
 
-        public BtwImageLibraryRefreshResult Refresh(
+        public BtwImageLibraryRefreshResult IndexBtwTemplates(
             IEnumerable<string> includeFolders,
             IEnumerable<string> excludeFolders,
-            int dpi,
             Action<BtwImageLibraryProgress> progress,
             CancellationToken cancellationToken)
         {
-            List<string> includes =
-                NormalizeFolders(includeFolders);
-            List<string> excludes =
-                NormalizeFolders(excludeFolders);
+            List<string> includes = NormalizeFolders(includeFolders);
+            List<string> excludes = NormalizeFolders(excludeFolders);
 
-            if (includes.Count == 0)
-                throw new InvalidOperationException(
-                    "Add at least one BTW Include Folder.");
+            ValidateIncludeFolders(includes);
 
-            List<string> unavailable =
-                includes.Where(
-                    x => !Directory.Exists(x)).ToList();
-
-            if (unavailable.Count > 0)
-                throw new DirectoryNotFoundException(
-                    "These BTW Include Folders are unavailable:\r\n\r\n" +
-                    string.Join("\r\n", unavailable));
-
-            List<string> files =
-                EnumerateBtwFiles(includes, excludes);
-
+            List<string> files = EnumerateBtwFiles(includes, excludes);
             BtwImageLibraryRefreshResult result =
-                new BtwImageLibraryRefreshResult
-                {
-                    TotalFiles = files.Count
-                };
+                new BtwImageLibraryRefreshResult { TotalFiles = files.Count };
 
-            Dictionary<string, BtwImageLibraryRecord> previous =
-                LoadAllRecords();
-
-            HashSet<string> current =
-                new HashSet<string>(
-                    files,
-                    StringComparer.OrdinalIgnoreCase);
-
-            RemoveDeleted(previous, current, result);
-
-            List<ExtractionJob> extractionJobs =
-                new List<ExtractionJob>();
-
-            List<BarcodeJob> barcodeJobs =
-                new List<BarcodeJob>();
-
-            int scanProcessed = 0;
-
-            foreach (string file in files)
+            // This is a deliberate manual full index. It does not compare
+            // timestamps, hashes or old rows.
+            using (SQLiteConnection c = OpenConnection())
+            using (SQLiteTransaction tx = c.BeginTransaction())
+            using (SQLiteCommand delete = c.CreateCommand())
+            using (SQLiteCommand insert = c.CreateCommand())
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                delete.Transaction = tx;
+                delete.CommandText = "DELETE FROM BtwTemplates;";
+                delete.ExecuteNonQuery();
 
-                FileInfo info;
+                insert.Transaction = tx;
+                insert.CommandText =
+                    "INSERT INTO BtwTemplates " +
+                    "(FilePath,FileName,ProductName,Barcode,ImagePath,Status," +
+                    "ErrorMessage,FileSize,LastWriteTicks,LastProcessedUtc) " +
+                    "VALUES (@path,@name,@product,'',@image,'New','',@size,@ticks,'');";
 
-                try
+                foreach (string file in files)
                 {
-                    info = new FileInfo(file);
-                }
-                catch
-                {
-                    result.Errors++;
-                    scanProcessed++;
-                    Report(
-                        progress,
-                        scanProcessed,
-                        files.Count,
-                        result,
-                        0,
-                        0,
-                        file);
-                    continue;
-                }
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                BtwImageLibraryRecord old;
-                bool exists =
-                    previous.TryGetValue(file, out old);
-
-                string expectedImage =
-                    GetImagePath(file);
-
-                bool sourceUnchanged =
-                    exists &&
-                    old.FileSize == info.Length &&
-                    old.LastWriteTicks ==
-                        info.LastWriteTimeUtc.Ticks;
-
-                bool imageExists =
-                    File.Exists(expectedImage);
-
-                if (sourceUnchanged &&
-                    imageExists)
-                {
-                    result.UnchangedFiles++;
-
-                    if (string.IsNullOrWhiteSpace(
-                        old.Barcode))
+                    FileInfo info;
+                    try
                     {
-                        barcodeJobs.Add(
-                            new BarcodeJob
-                            {
-                                FilePath = file,
-                                ImagePath = expectedImage,
-                                BaseRecord = old
-                            });
+                        info = new FileInfo(file);
+                    }
+                    catch
+                    {
+                        result.Errors++;
+                        Report(progress, "Index BTW", result.IndexedFiles,
+                            files.Count, result, file, false);
+                        continue;
                     }
 
-                    scanProcessed++;
+                    insert.Parameters.Clear();
+                    insert.Parameters.AddWithValue("@path", file);
+                    insert.Parameters.AddWithValue("@name", Path.GetFileName(file));
+                    insert.Parameters.AddWithValue("@product",
+                        Path.GetFileNameWithoutExtension(file));
+                    insert.Parameters.AddWithValue("@image", GetImagePath(file));
+                    insert.Parameters.AddWithValue("@size", info.Length);
+                    insert.Parameters.AddWithValue("@ticks", info.LastWriteTimeUtc.Ticks);
+                    insert.ExecuteNonQuery();
 
-                    Report(
-                        progress,
-                        scanProcessed,
-                        files.Count,
-                        result,
-                        result.TotalFiles,
-                        barcodeJobs.Count,
-                        file);
+                    result.IndexedFiles++;
 
-                    continue;
+                    Report(progress, "Index BTW", result.IndexedFiles,
+                        files.Count, result, file, false);
                 }
 
-                if (exists)
-                    result.ChangedFiles++;
-                else
-                    result.NewFiles++;
-
-                // Critical optimization:
-                // If the SQLite index is new/empty but the PNG was already
-                // generated by the previous library, don't run BarTender again.
-                if (imageExists)
-                {
-                    BtwImageLibraryRecord baseRecord =
-                        CreateBaseRecord(
-                            file,
-                            info,
-                            expectedImage,
-                            "Ready - Barcode Pending");
-
-                    UpsertRecord(baseRecord);
-
-                    barcodeJobs.Add(
-                        new BarcodeJob
-                        {
-                            FilePath = file,
-                            ImagePath = expectedImage,
-                            BaseRecord = baseRecord
-                        });
-
-                    result.ExistingImagesIndexed++;
-
-                    scanProcessed++;
-
-                    Report(
-                        progress,
-                        scanProcessed,
-                        files.Count,
-                        result,
-                        extractionJobs.Count,
-                        barcodeJobs.Count,
-                        file);
-
-                    continue;
-                }
-
-                extractionJobs.Add(
-                    new ExtractionJob
-                    {
-                        FilePath = file,
-                        FileInfo = info,
-                        Previous = old,
-                        OutputPath = expectedImage
-                    });
-
-                scanProcessed++;
-
-                Report(
-                    progress,
-                    scanProcessed,
-                    files.Count,
-                    result,
-                    extractionJobs.Count,
-                    barcodeJobs.Count,
-                    file);
-            }
-
-            // Barcode workers can run while BarTender extracts.
-            using (BlockingCollection<BarcodeJob> barcodeQueue =
-                new BlockingCollection<BarcodeJob>(
-                    new ConcurrentQueue<BarcodeJob>()))
-            using (BlockingCollection<BtwImageLibraryRecord> writeQueue =
-                new BlockingCollection<BtwImageLibraryRecord>(
-                    new ConcurrentQueue<BtwImageLibraryRecord>()))
-            {
-                foreach (BarcodeJob job in barcodeJobs)
-                    barcodeQueue.Add(job);
-
-                Task writer =
-                    Task.Run(
-                        () => RunSqliteWriter(
-                            writeQueue,
-                            cancellationToken),
-                        cancellationToken);
-
-                int barcodeTotal =
-                    barcodeJobs.Count +
-                    extractionJobs.Count;
-
-                int barcodeProcessed = 0;
-                int extractionProcessed = 0;
-
-                int workerCount =
-                    Math.Max(
-                        1,
-                        Math.Min(
-                            MaxBarcodeWorkerCount,
-                            BarcodeWorkerCount));
-
-                Task[] barcodeWorkers =
-                    new Task[workerCount];
-
-                for (int i = 0;
-                    i < workerCount;
-                    i++)
-                {
-                    barcodeWorkers[i] =
-                        Task.Run(
-                            () =>
-                                BarcodeWorker(
-                                    barcodeQueue,
-                                    writeQueue,
-                                    cancellationToken,
-                                    () =>
-                                    {
-                                        int done =
-                                            Interlocked.Increment(
-                                                ref barcodeProcessed);
-
-                                        Report(
-                                            progress,
-                                            scanProcessed,
-                                            files.Count,
-                                            result,
-                                            extractionProcessed,
-                                            done,
-                                            "Barcode indexing");
-                                    }),
-                            cancellationToken);
-                }
-
-                // ONE BarTender instance, on ONE thread.
-                RunBarTenderExtraction(
-                    extractionJobs,
-                    dpi,
-                    cancellationToken,
-                    writeQueue,
-                    barcodeQueue,
-                    result,
-                    () =>
-                    {
-                        int done =
-                            Interlocked.Increment(
-                                ref extractionProcessed);
-
-                        Report(
-                            progress,
-                            scanProcessed,
-                            files.Count,
-                            result,
-                            done,
-                            barcodeProcessed,
-                            "BarTender extraction");
-                    });
-
-                barcodeQueue.CompleteAdding();
-
-                try
-                {
-                    Task.WaitAll(barcodeWorkers);
-                }
-                catch (AggregateException)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    throw;
-                }
-
-                writeQueue.CompleteAdding();
-
-                try
-                {
-                    writer.Wait();
-                }
-                catch (AggregateException)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    throw;
-                }
-
-                result.BarcodeProcessed =
-                    barcodeProcessed;
+                tx.Commit();
             }
 
             RebuildStatistics();
 
-            result.DuplicateBarcodes =
-                DuplicateBarcodeCount;
+            result.DuplicateBarcodes = DuplicateBarcodeCount;
+            Report(progress, "Index BTW", result.IndexedFiles, files.Count,
+                result, "Index complete", true);
 
             return result;
         }
 
-        private void RunBarTenderExtraction(
-            List<ExtractionJob> jobs,
+        public BtwImageLibraryRefreshResult CreateImages(
             int dpi,
-            CancellationToken cancellationToken,
-            BlockingCollection<BtwImageLibraryRecord> writeQueue,
-            BlockingCollection<BarcodeJob> barcodeQueue,
-            BtwImageLibraryRefreshResult result,
-            Action extractionProgress)
+            Action<BtwImageLibraryProgress> progress,
+            CancellationToken cancellationToken)
         {
-            if (jobs.Count == 0)
-                return;
+            return CreateImages(
+                dpi,
+                "PNG",
+                progress,
+                cancellationToken);
+        }
+
+        public BtwImageLibraryRefreshResult CreateImages(
+            int dpi,
+            string imageExtension,
+            Action<BtwImageLibraryProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            imageExtension =
+                BtwImageLibraryModuleSettings.NormalizeExtension(
+                    imageExtension);
+
+            List<BtwImageLibraryRecord> records = LoadAllRecords();
+
+            BtwImageLibraryRefreshResult result =
+                new BtwImageLibraryRefreshResult
+                {
+                    TotalFiles = records.Count
+                };
+
+            if (records.Count == 0)
+            {
+                Report(progress, "Create Images", 0, 0, result,
+                    "No BTW templates are indexed.", true);
+                return result;
+            }
 
             dynamic btApp = null;
 
             try
             {
-                Type btType =
-                    Type.GetTypeFromProgID(
-                        "BarTender.Application");
-
+                Type btType = Type.GetTypeFromProgID("BarTender.Application");
                 if (btType == null)
                     throw new InvalidOperationException(
                         "BarTender.Application could not be started.");
 
-                // Deliberately ONE COM instance.
-                btApp =
-                    Activator.CreateInstance(btType);
+                // Exactly one BarTender COM instance.
+                btApp = Activator.CreateInstance(btType);
 
-                // Match the known-working BarTender workflow.
+                // Match the known working BarTender workflow.
                 btApp.Visible = true;
 
-                foreach (ExtractionJob job in jobs)
+                for (int i = 0; i < records.Count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
+                    BtwImageLibraryRecord r = records[i];
+
                     try
                     {
+                        r.ImagePath =
+                            GetImagePath(
+                                r.FilePath,
+                                imageExtension);
+
                         Directory.CreateDirectory(
-                            Path.GetDirectoryName(
-                                job.OutputPath));
+                            Path.GetDirectoryName(r.ImagePath));
 
                         ExportOneBtw(
                             btApp,
-                            job.FilePath,
-                            job.OutputPath,
+                            r.FilePath,
+                            r.ImagePath,
                             dpi,
+                            imageExtension,
                             cancellationToken);
 
-                        BtwImageLibraryRecord record =
-                            CreateBaseRecord(
-                                job.FilePath,
-                                job.FileInfo,
-                                job.OutputPath,
-                                "Ready - Barcode Pending");
+                        r.Status = "Image Ready - Barcode Pending";
+                        r.ErrorMessage = "";
+                        r.Barcode = "";
+                        r.LastProcessedUtc = DateTime.UtcNow.ToString("o");
 
-                        writeQueue.Add(
-                            record,
-                            cancellationToken);
-
-                        barcodeQueue.Add(
-                            new BarcodeJob
-                            {
-                                FilePath = job.FilePath,
-                                ImagePath = job.OutputPath,
-                                BaseRecord = record
-                            },
-                            cancellationToken);
-
+                        UpdateRecord(r);
                         result.ImagesCreated++;
                     }
                     catch (OperationCanceledException)
@@ -684,323 +414,214 @@ namespace NPPLPrintMaster
                     }
                     catch (Exception ex)
                     {
-                        BtwImageLibraryRecord error =
-                            CreateErrorRecord(
-                                job.FilePath,
-                                job.FileInfo,
-                                ex);
-
-                        writeQueue.Add(
-                            error,
-                            cancellationToken);
-
+                        r.Status = "Error";
+                        r.ErrorMessage = ex.Message;
+                        r.LastProcessedUtc = DateTime.UtcNow.ToString("o");
+                        UpdateRecord(r);
                         result.Errors++;
                     }
 
-                    extractionProgress();
+                    int processed = i + 1;
+                    Report(progress, "Create Images", processed,
+                        records.Count, result, r.FilePath, false);
                 }
             }
             finally
             {
                 if (btApp != null)
                 {
-                    try
-                    {
-                        btApp.Quit(2);
-                    }
-                    catch
-                    {
-                    }
-
+                    try { btApp.Quit(2); } catch { }
                     btApp = null;
                 }
             }
-        }
 
-        private void BarcodeWorker(
-            BlockingCollection<BarcodeJob> barcodeQueue,
-            BlockingCollection<BtwImageLibraryRecord> writeQueue,
-            CancellationToken cancellationToken,
-            Action completed)
-        {
-            try
-            {
-                foreach (BarcodeJob job in
-                    barcodeQueue.GetConsumingEnumerable(
-                        cancellationToken))
-                {
-                    BtwImageLibraryRecord record =
-                        job.BaseRecord ?? Get(job.FilePath);
+            RebuildStatistics();
+            result.DuplicateBarcodes = DuplicateBarcodeCount;
 
-                    if (record == null)
-                        continue;
-
-                    try
-                    {
-                        record.Barcode =
-                            DecodeBarcode(job.ImagePath);
-
-                        record.Status =
-                            string.IsNullOrWhiteSpace(
-                                record.Barcode)
-                                ? "Ready - Barcode Not Detected"
-                                : "Ready";
-
-                        record.ErrorMessage = "";
-                    }
-                    catch (Exception ex)
-                    {
-                        record.Status = "Error";
-                        record.ErrorMessage =
-                            ex.Message;
-                    }
-
-                    record.LastProcessedUtc =
-                        DateTime.UtcNow.ToString("o");
-
-                    writeQueue.Add(
-                        record,
-                        cancellationToken);
-
-                    completed();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-        }
-
-        private void RunSqliteWriter(
-            BlockingCollection<BtwImageLibraryRecord> writeQueue,
-            CancellationToken cancellationToken)
-        {
-            using (SQLiteConnection c = OpenConnection())
-            {
-                SQLiteTransaction tx = c.BeginTransaction();
-                int batch = 0;
-
-                try
-                {
-                    foreach (BtwImageLibraryRecord record in
-                        writeQueue.GetConsumingEnumerable(
-                            cancellationToken))
-                    {
-                        UpsertRecord(c, tx, record);
-                        batch++;
-
-                        if (batch >= SqliteBatchSize)
-                        {
-                            tx.Commit();
-                            tx.Dispose();
-
-                            tx = c.BeginTransaction();
-                            batch = 0;
-                        }
-                    }
-
-                    if (batch > 0)
-                        tx.Commit();
-                }
-                finally
-                {
-                    try { tx.Dispose(); } catch { }
-                }
-            }
-        }
-
-        private void UpsertRecord(
-            BtwImageLibraryRecord record)
-        {
-            using (SQLiteConnection c = OpenConnection())
-            using (SQLiteTransaction tx =
-                c.BeginTransaction())
-            {
-                UpsertRecord(c, tx, record);
-                tx.Commit();
-            }
-        }
-
-        private static void UpsertRecord(
-            SQLiteConnection c,
-            SQLiteTransaction tx,
-            BtwImageLibraryRecord r)
-        {
-            using (SQLiteCommand cmd = c.CreateCommand())
-            {
-                cmd.Transaction = tx;
-                cmd.CommandText =
-                    "INSERT INTO BtwTemplates " +
-                    "(FilePath,FileName,ProductName,Barcode," +
-                    "ImagePath,Status,ErrorMessage,FileSize," +
-                    "LastWriteTicks,LastProcessedUtc) " +
-                    "VALUES " +
-                    "(@FilePath,@FileName,@ProductName,@Barcode," +
-                    "@ImagePath,@Status,@ErrorMessage,@FileSize," +
-                    "@LastWriteTicks,@LastProcessedUtc) " +
-                    "ON CONFLICT(FilePath) DO UPDATE SET " +
-                    "FileName=excluded.FileName," +
-                    "ProductName=excluded.ProductName," +
-                    "Barcode=excluded.Barcode," +
-                    "ImagePath=excluded.ImagePath," +
-                    "Status=excluded.Status," +
-                    "ErrorMessage=excluded.ErrorMessage," +
-                    "FileSize=excluded.FileSize," +
-                    "LastWriteTicks=excluded.LastWriteTicks," +
-                    "LastProcessedUtc=excluded.LastProcessedUtc;";
-
-                AddParameters(cmd, r);
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        private static void AddParameters(
-            SQLiteCommand cmd,
-            BtwImageLibraryRecord r)
-        {
-            cmd.Parameters.AddWithValue(
-                "@FilePath", r.FilePath ?? "");
-            cmd.Parameters.AddWithValue(
-                "@FileName", r.FileName ?? "");
-            cmd.Parameters.AddWithValue(
-                "@ProductName", r.ProductName ?? "");
-            cmd.Parameters.AddWithValue(
-                "@Barcode", r.Barcode ?? "");
-            cmd.Parameters.AddWithValue(
-                "@ImagePath", r.ImagePath ?? "");
-            cmd.Parameters.AddWithValue(
-                "@Status", r.Status ?? "");
-            cmd.Parameters.AddWithValue(
-                "@ErrorMessage", r.ErrorMessage ?? "");
-            cmd.Parameters.AddWithValue(
-                "@FileSize", r.FileSize);
-            cmd.Parameters.AddWithValue(
-                "@LastWriteTicks", r.LastWriteTicks);
-            cmd.Parameters.AddWithValue(
-                "@LastProcessedUtc",
-                r.LastProcessedUtc ?? "");
-        }
-
-        private Dictionary<string, BtwImageLibraryRecord>
-            LoadAllRecords()
-        {
-            Dictionary<string, BtwImageLibraryRecord> result =
-                new Dictionary<string, BtwImageLibraryRecord>(
-                    StringComparer.OrdinalIgnoreCase);
-
-            using (SQLiteConnection c = OpenConnection())
-            using (SQLiteCommand cmd =
-                new SQLiteCommand(
-                    "SELECT FilePath,FileName,ProductName,Barcode," +
-                    "ImagePath,Status,ErrorMessage,FileSize," +
-                    "LastWriteTicks,LastProcessedUtc " +
-                    "FROM BtwTemplates;",
-                    c))
-            using (SQLiteDataReader r =
-                cmd.ExecuteReader())
-            {
-                while (r.Read())
-                {
-                    BtwImageLibraryRecord record =
-                        ReadRecord(r);
-
-                    result[record.FilePath] =
-                        record;
-                }
-            }
+            Report(progress, "Create Images", records.Count,
+                records.Count, result, "Image creation complete", true);
 
             return result;
         }
 
-        private void RemoveDeleted(
-            Dictionary<string, BtwImageLibraryRecord> previous,
-            HashSet<string> current,
-            BtwImageLibraryRefreshResult result)
+        public BtwImageLibraryRefreshResult IndexBarcodes(
+            Action<BtwImageLibraryProgress> progress,
+            CancellationToken cancellationToken)
         {
-            List<string> deleted =
-                previous.Keys
-                    .Where(x => !current.Contains(x))
-                    .ToList();
+            List<BtwImageLibraryRecord> records = LoadAllRecords()
+                .Where(r => !string.IsNullOrWhiteSpace(r.ImagePath) &&
+                            File.Exists(r.ImagePath))
+                .ToList();
 
-            if (deleted.Count == 0)
-                return;
+            BtwImageLibraryRefreshResult result =
+                new BtwImageLibraryRefreshResult
+                {
+                    TotalFiles = records.Count
+                };
 
+            if (records.Count == 0)
+            {
+                Report(progress, "Index Barcodes", 0, 0, result,
+                    "No generated images are available.", true);
+                return result;
+            }
+
+            ConcurrentQueue<BtwImageLibraryRecord> queue =
+                new ConcurrentQueue<BtwImageLibraryRecord>(records);
+
+            int workers = Math.Max(1, Math.Min(MaxBarcodeWorkers, BarcodeWorkerCount));
+            int processed = 0;
+
+            Task[] tasks = new Task[workers];
+
+            for (int i = 0; i < workers; i++)
+            {
+                tasks[i] = Task.Run(() =>
+                {
+                    BtwImageLibraryRecord record;
+
+                    while (queue.TryDequeue(out record))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        try
+                        {
+                            string barcode = DecodeBarcode(record.ImagePath);
+
+                            record.Barcode = barcode;
+                            record.ErrorMessage = "";
+                            record.Status = string.IsNullOrWhiteSpace(barcode)
+                                ? "Ready - Barcode Not Detected"
+                                : "Ready";
+                        }
+                        catch (Exception ex)
+                        {
+                            record.Status = "Error";
+                            record.ErrorMessage = ex.Message;
+                            result.Errors++;
+                        }
+
+                        record.LastProcessedUtc = DateTime.UtcNow.ToString("o");
+                        UpdateRecord(record);
+
+                        int done = Interlocked.Increment(ref processed);
+
+                        if (string.IsNullOrWhiteSpace(record.Barcode))
+                            result.BarcodeNotDetected++;
+                        else
+                            result.BarcodeDetected++;
+
+                        result.BarcodeProcessed++;
+
+                        Report(progress, "Index Barcodes", done,
+                            records.Count, result, record.FilePath, false);
+                    }
+                }, cancellationToken);
+            }
+
+            try
+            {
+                Task.WaitAll(tasks);
+            }
+            catch (AggregateException)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
+
+            RebuildStatistics();
+            result.DuplicateBarcodes = DuplicateBarcodeCount;
+
+            Report(progress, "Index Barcodes", records.Count,
+                records.Count, result, "Barcode indexing complete", true);
+
+            return result;
+        }
+
+        // Kept as a compatibility wrapper for any older caller.
+        // The new UI does not use it.
+        public BtwImageLibraryRefreshResult Refresh(
+            IEnumerable<string> includeFolders,
+            IEnumerable<string> excludeFolders,
+            int dpi,
+            Action<BtwImageLibraryProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            BtwImageLibraryRefreshResult result =
+                IndexBtwTemplates(includeFolders, excludeFolders,
+                    progress, cancellationToken);
+
+            BtwImageLibraryRefreshResult images =
+                CreateImages(dpi, progress, cancellationToken);
+
+            result.ImagesCreated = images.ImagesCreated;
+            result.Errors += images.Errors;
+
+            BtwImageLibraryRefreshResult barcodes =
+                IndexBarcodes(progress, cancellationToken);
+
+            result.BarcodeProcessed = barcodes.BarcodeProcessed;
+            result.BarcodeDetected = barcodes.BarcodeDetected;
+            result.BarcodeNotDetected = barcodes.BarcodeNotDetected;
+            result.Errors += barcodes.Errors;
+            result.DuplicateBarcodes = barcodes.DuplicateBarcodes;
+
+            return result;
+        }
+
+        private void ValidateIncludeFolders(List<string> includes)
+        {
+            if (includes.Count == 0)
+                throw new InvalidOperationException(
+                    "Add at least one BTW Include Folder.");
+
+            List<string> unavailable = includes
+                .Where(x => !Directory.Exists(x))
+                .ToList();
+
+            if (unavailable.Count > 0)
+                throw new DirectoryNotFoundException(
+                    "These BTW Include Folders are unavailable:\r\n\r\n" +
+                    string.Join("\r\n", unavailable));
+        }
+
+        private void UpdateRecord(BtwImageLibraryRecord r)
+        {
             using (SQLiteConnection c = OpenConnection())
-            using (SQLiteTransaction tx =
-                c.BeginTransaction())
             using (SQLiteCommand cmd = c.CreateCommand())
             {
-                cmd.Transaction = tx;
                 cmd.CommandText =
-                    "DELETE FROM BtwTemplates " +
-                    "WHERE FilePath=@p;";
+                    "UPDATE BtwTemplates SET Barcode=@barcode,ImagePath=@image," +
+                    "Status=@status,ErrorMessage=@error,LastProcessedUtc=@utc " +
+                    "WHERE FilePath=@path;";
 
-                SQLiteParameter p =
-                    cmd.Parameters.Add(
-                        "@p",
-                        System.Data.DbType.String);
-
-                foreach (string path in deleted)
-                {
-                    p.Value = path;
-                    cmd.ExecuteNonQuery();
-                    result.RemovedFiles++;
-                }
-
-                tx.Commit();
+                cmd.Parameters.AddWithValue("@barcode", r.Barcode ?? "");
+                cmd.Parameters.AddWithValue("@image", r.ImagePath ?? "");
+                cmd.Parameters.AddWithValue("@status", r.Status ?? "");
+                cmd.Parameters.AddWithValue("@error", r.ErrorMessage ?? "");
+                cmd.Parameters.AddWithValue("@utc", r.LastProcessedUtc ?? "");
+                cmd.Parameters.AddWithValue("@path", r.FilePath ?? "");
+                cmd.ExecuteNonQuery();
             }
         }
 
-        private BtwImageLibraryRecord
-            CreateBaseRecord(
-                string file,
-                FileInfo info,
-                string imagePath,
-                string status)
+        private List<BtwImageLibraryRecord> LoadAllRecords()
         {
-            return new BtwImageLibraryRecord
-            {
-                FilePath = file,
-                FileName = Path.GetFileName(file),
-                ProductName =
-                    Path.GetFileNameWithoutExtension(file),
-                Barcode = "",
-                ImagePath = imagePath,
-                Status = status,
-                ErrorMessage = "",
-                FileSize = info.Length,
-                LastWriteTicks =
-                    info.LastWriteTimeUtc.Ticks,
-                LastProcessedUtc =
-                    DateTime.UtcNow.ToString("o")
-            };
-        }
+            List<BtwImageLibraryRecord> result =
+                new List<BtwImageLibraryRecord>();
 
-        private static BtwImageLibraryRecord
-            CreateErrorRecord(
-                string file,
-                FileInfo info,
-                Exception ex)
-        {
-            return new BtwImageLibraryRecord
+            using (SQLiteConnection c = OpenConnection())
+            using (SQLiteCommand cmd = new SQLiteCommand(
+                "SELECT FilePath,FileName,ProductName,Barcode,ImagePath," +
+                "Status,ErrorMessage,FileSize,LastWriteTicks,LastProcessedUtc " +
+                "FROM BtwTemplates ORDER BY FilePath COLLATE NOCASE;", c))
+            using (SQLiteDataReader r = cmd.ExecuteReader())
             {
-                FilePath = file,
-                FileName = Path.GetFileName(file),
-                ProductName =
-                    Path.GetFileNameWithoutExtension(file),
-                Barcode = "",
-                ImagePath = "",
-                Status = "Error",
-                ErrorMessage =
-                    ex == null
-                        ? "Unknown error."
-                        : ex.Message,
-                FileSize = info.Length,
-                LastWriteTicks =
-                    info.LastWriteTimeUtc.Ticks,
-                LastProcessedUtc =
-                    DateTime.UtcNow.ToString("o")
-            };
+                while (r.Read())
+                    result.Add(ReadRecord(r));
+            }
+
+            return result;
         }
 
         private static void ExportOneBtw(
@@ -1008,6 +629,7 @@ namespace NPPLPrintMaster
             string btwPath,
             string outputPath,
             int dpi,
+            string imageExtension,
             CancellationToken cancellationToken)
         {
             dynamic btFormat = null;
@@ -1016,11 +638,7 @@ namespace NPPLPrintMaster
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                btFormat =
-                    btApp.Formats.Open(
-                        btwPath,
-                        false,
-                        "");
+                btFormat = btApp.Formats.Open(btwPath, false, "");
 
                 if (btFormat == null)
                     throw new InvalidOperationException(
@@ -1028,9 +646,15 @@ namespace NPPLPrintMaster
 
                 cancellationToken.ThrowIfCancellationRequested();
 
+                string exportFormat =
+                    imageExtension == "JPG" ? "JPEG" :
+                    imageExtension == "BMP" ? "BMP" :
+                    imageExtension == "TIFF" ? "TIFF" :
+                    "PNG";
+
                 btFormat.ExportToFile(
                     outputPath,
-                    "PNG",
+                    exportFormat,
                     4,
                     dpi,
                     2);
@@ -1039,68 +663,35 @@ namespace NPPLPrintMaster
             {
                 if (btFormat != null)
                 {
-                    try
-                    {
-                        btFormat.Close(2);
-                    }
-                    catch
-                    {
-                    }
-
+                    try { btFormat.Close(2); } catch { }
                     btFormat = null;
                 }
             }
         }
 
-        private static string DecodeBarcode(
-            string file)
+        private static string DecodeBarcode(string file)
         {
-            try
+            using (Bitmap bmp = new Bitmap(file))
             {
-                using (Bitmap bmp =
-                    new Bitmap(file))
+                BarcodeReader reader = new BarcodeReader
                 {
-                    BarcodeReader fast =
-                        new BarcodeReader
-                        {
-                            AutoRotate = true,
-                            Options =
-                                new DecodingOptions
-                                {
-                                    TryHarder = false
-                                }
-                        };
+                    AutoRotate = true,
+                    Options = new DecodingOptions { TryHarder = false }
+                };
 
-                    Result result =
-                        fast.Decode(bmp);
+                Result result = reader.Decode(bmp);
 
-                    if (result != null &&
-                        !string.IsNullOrWhiteSpace(
-                            result.Text))
-                        return result.Text.Trim();
-
-                    BarcodeReader thorough =
-                        new BarcodeReader
-                        {
-                            AutoRotate = true,
-                            Options =
-                                new DecodingOptions
-                                {
-                                    TryHarder = true
-                                }
-                        };
-
-                    result =
-                        thorough.Decode(bmp);
-
-                    return result == null
-                        ? ""
-                        : (result.Text ?? "").Trim();
+                if (result == null || string.IsNullOrWhiteSpace(result.Text))
+                {
+                    reader = new BarcodeReader
+                    {
+                        AutoRotate = true,
+                        Options = new DecodingOptions { TryHarder = true }
+                    };
+                    result = reader.Decode(bmp);
                 }
-            }
-            catch
-            {
-                return "";
+
+                return result == null ? "" : (result.Text ?? "").Trim();
             }
         }
 
@@ -1109,95 +700,63 @@ namespace NPPLPrintMaster
             IEnumerable<string> excludeFolders)
         {
             HashSet<string> excluded =
-                new HashSet<string>(
-                    NormalizeFolders(excludeFolders),
+                new HashSet<string>(NormalizeFolders(excludeFolders),
                     StringComparer.OrdinalIgnoreCase);
 
             HashSet<string> files =
-                new HashSet<string>(
-                    StringComparer.OrdinalIgnoreCase);
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (string root in
-                NormalizeFolders(includeFolders))
+            foreach (string root in NormalizeFolders(includeFolders))
             {
                 if (!Directory.Exists(root))
                     continue;
 
-                Stack<string> stack =
-                    new Stack<string>();
+                Stack<string> dirs = new Stack<string>();
+                dirs.Push(root);
 
-                stack.Push(root);
-
-                while (stack.Count > 0)
+                while (dirs.Count > 0)
                 {
-                    string dir = stack.Pop();
+                    string dir = dirs.Pop();
 
                     if (IsExcluded(dir, excluded))
                         continue;
 
                     try
                     {
-                        foreach (string file in
-                            Directory.GetFiles(
-                                dir,
-                                "*.btw",
-                                SearchOption.TopDirectoryOnly))
-                        {
-                            files.Add(
-                                Path.GetFullPath(file));
-                        }
+                        foreach (string file in Directory.GetFiles(
+                            dir, "*.btw", SearchOption.TopDirectoryOnly))
+                            files.Add(Path.GetFullPath(file));
                     }
-                    catch
-                    {
-                    }
+                    catch { }
 
                     try
                     {
-                        foreach (string child in
-                            Directory.GetDirectories(
-                                dir,
-                                "*",
-                                SearchOption.TopDirectoryOnly))
+                        foreach (string child in Directory.GetDirectories(
+                            dir, "*", SearchOption.TopDirectoryOnly))
                         {
                             if (!IsExcluded(child, excluded))
-                                stack.Push(child);
+                                dirs.Push(child);
                         }
                     }
-                    catch
-                    {
-                    }
+                    catch { }
                 }
             }
 
-            return files
-                .OrderBy(
-                    x => x,
-                    StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            return files.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        private static bool IsExcluded(
-            string path,
-            HashSet<string> excluded)
+        private static bool IsExcluded(string path, HashSet<string> excluded)
         {
-            string full =
-                Path.GetFullPath(path).TrimEnd(
-                    Path.DirectorySeparatorChar,
-                    Path.AltDirectorySeparatorChar);
+            string full = Path.GetFullPath(path).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
             foreach (string root in excluded)
             {
-                string e =
-                    root.TrimEnd(
-                        Path.DirectorySeparatorChar,
-                        Path.AltDirectorySeparatorChar);
+                string e = root.TrimEnd(
+                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-                if (string.Equals(
-                        full,
-                        e,
-                        StringComparison.OrdinalIgnoreCase) ||
-                    full.StartsWith(
-                        e + Path.DirectorySeparatorChar,
+                if (string.Equals(full, e, StringComparison.OrdinalIgnoreCase) ||
+                    full.StartsWith(e + Path.DirectorySeparatorChar,
                         StringComparison.OrdinalIgnoreCase))
                     return true;
             }
@@ -1205,70 +764,50 @@ namespace NPPLPrintMaster
             return false;
         }
 
-        private static List<string> NormalizeFolders(
-            IEnumerable<string> folders)
+        private static List<string> NormalizeFolders(IEnumerable<string> folders)
         {
             return (folders ?? Enumerable.Empty<string>())
-                .Where(
-                    x => !string.IsNullOrWhiteSpace(x))
-                .Select(
-                    x =>
-                    {
-                        try
-                        {
-                            return Path.GetFullPath(
-                                x.Trim());
-                        }
-                        catch
-                        {
-                            return "";
-                        }
-                    })
-                .Where(
-                    x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(
-                    StringComparer.OrdinalIgnoreCase)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x =>
+                {
+                    try { return Path.GetFullPath(x.Trim()); }
+                    catch { return ""; }
+                })
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 
         private void Report(
             Action<BtwImageLibraryProgress> progress,
-            int scanProcessed,
-            int scanTotal,
+            string operation,
+            int processed,
+            int total,
             BtwImageLibraryRefreshResult result,
-            int extractionProcessed,
-            int barcodeProcessed,
-            string current)
+            string current,
+            bool completed)
         {
             if (progress == null)
                 return;
 
-            progress(
-                new BtwImageLibraryProgress
-                {
-                    Processed = scanProcessed,
-                    Total = scanTotal,
-                    NewFiles = result.NewFiles,
-                    ChangedFiles = result.ChangedFiles,
-                    UnchangedFiles =
-                        result.UnchangedFiles,
-                    ImagesCreated =
-                        result.ImagesCreated,
-                    Errors = result.Errors,
-                    CurrentFile = current,
-                    ExtractionProcessed =
-                        extractionProcessed,
-                    ExtractionTotal = 0,
-                    BarcodeProcessed =
-                        barcodeProcessed,
-                    BarcodeTotal = 0,
-                    ExistingImagesIndexed =
-                        result.ExistingImagesIndexed
-                });
+            progress(new BtwImageLibraryProgress
+            {
+                Operation = operation,
+                Processed = processed,
+                Total = total,
+                Found = result.TotalFiles,
+                Created = result.ImagesCreated,
+                Indexed = result.IndexedFiles,
+                Detected = result.BarcodeDetected,
+                NotDetected = result.BarcodeNotDetected,
+                Errors = result.Errors,
+                Duplicates = result.DuplicateBarcodes,
+                CurrentFile = current,
+                Completed = completed
+            });
         }
 
-        private static BtwImageLibraryRecord
-            ReadRecord(SQLiteDataReader r)
+        private BtwImageLibraryRecord ReadRecord(SQLiteDataReader r)
         {
             return new BtwImageLibraryRecord
             {
@@ -1285,38 +824,33 @@ namespace NPPLPrintMaster
             };
         }
 
-        private static string GetString(
-            SQLiteDataReader r,
-            int index)
+        private static string GetString(SQLiteDataReader r, int i)
         {
-            return r.IsDBNull(index)
-                ? ""
-                : Convert.ToString(r.GetValue(index));
+            return r.IsDBNull(i) ? "" : Convert.ToString(r.GetValue(i));
         }
 
-        private static long GetInt64(
-            SQLiteDataReader r,
-            int index)
+        private static long GetInt64(SQLiteDataReader r, int i)
         {
-            return r.IsDBNull(index)
-                ? 0
-                : Convert.ToInt64(r.GetValue(index));
+            return r.IsDBNull(i) ? 0 : Convert.ToInt64(r.GetValue(i));
         }
 
         private SQLiteConnection OpenConnection()
         {
-            SQLiteConnection c =
-                new SQLiteConnection(connectionString);
-
+            SQLiteConnection c = new SQLiteConnection(connectionString);
             c.Open();
 
             using (SQLiteCommand cmd = c.CreateCommand())
             {
-                cmd.CommandText =
-                    "PRAGMA journal_mode=WAL;" +
-                    "PRAGMA synchronous=NORMAL;" +
-                    "PRAGMA temp_store=MEMORY;" +
-                    "PRAGMA cache_size=-20000;";
+                cmd.CommandText = "PRAGMA journal_mode=WAL;";
+                cmd.ExecuteNonQuery();
+
+                cmd.CommandText = "PRAGMA synchronous=NORMAL;";
+                cmd.ExecuteNonQuery();
+
+                cmd.CommandText = "PRAGMA temp_store=MEMORY;";
+                cmd.ExecuteNonQuery();
+
+                cmd.CommandText = "PRAGMA cache_size=-20000;";
                 cmd.ExecuteNonQuery();
             }
 
@@ -1341,22 +875,11 @@ namespace NPPLPrintMaster
                     "FileSize INTEGER NOT NULL DEFAULT 0," +
                     "LastWriteTicks INTEGER NOT NULL DEFAULT 0," +
                     "LastProcessedUtc TEXT);" +
-
-                    "CREATE INDEX IF NOT EXISTS IX_BtwTemplates_Barcode " +
-                    "ON BtwTemplates(Barcode);" +
-
-                    "CREATE INDEX IF NOT EXISTS IX_BtwTemplates_Status " +
-                    "ON BtwTemplates(Status);" +
-
-                    "CREATE INDEX IF NOT EXISTS IX_BtwTemplates_ProductName " +
-                    "ON BtwTemplates(ProductName);" +
-
-                    "CREATE INDEX IF NOT EXISTS IX_BtwTemplates_FileName " +
-                    "ON BtwTemplates(FileName);" +
-
-                    "CREATE INDEX IF NOT EXISTS IX_BtwTemplates_FilePath " +
-                    "ON BtwTemplates(FilePath);";
-
+                    "CREATE INDEX IF NOT EXISTS IX_Btw_Barcode ON BtwTemplates(Barcode);" +
+                    "CREATE INDEX IF NOT EXISTS IX_Btw_Status ON BtwTemplates(Status);" +
+                    "CREATE INDEX IF NOT EXISTS IX_Btw_Product ON BtwTemplates(ProductName);" +
+                    "CREATE INDEX IF NOT EXISTS IX_Btw_FileName ON BtwTemplates(FileName);" +
+                    "CREATE INDEX IF NOT EXISTS IX_Btw_FilePath ON BtwTemplates(FilePath);";
                 cmd.ExecuteNonQuery();
             }
         }
@@ -1368,97 +891,73 @@ namespace NPPLPrintMaster
             int missing = 0;
 
             using (SQLiteConnection c = OpenConnection())
-            using (SQLiteCommand cmd =
-                new SQLiteCommand(
-                    "SELECT ImagePath,Status FROM BtwTemplates;",
-                    c))
-            using (SQLiteDataReader r =
-                cmd.ExecuteReader())
+            using (SQLiteCommand cmd = new SQLiteCommand(
+                "SELECT ImagePath,Status FROM BtwTemplates;", c))
+            using (SQLiteDataReader r = cmd.ExecuteReader())
             {
                 while (r.Read())
                 {
-                    string image =
-                        GetString(r, 0);
-                    string status =
-                        GetString(r, 1);
+                    string image = GetString(r, 0);
+                    string status = GetString(r, 1);
 
-                    if (!string.IsNullOrWhiteSpace(image) &&
-                        File.Exists(image))
+                    if (!string.IsNullOrWhiteSpace(image) && File.Exists(image))
                         images++;
                     else
                         missing++;
 
-                    if (string.Equals(
-                        status,
-                        "Error",
+                    if (string.Equals(status, "Error",
                         StringComparison.OrdinalIgnoreCase))
                         errors++;
                 }
             }
 
-            cachedImageCount = images;
-            cachedErrorCount = errors;
-            cachedMissingImageCount = missing;
+            imageCount = images;
+            errorCount = errors;
+            missingImageCount = missing;
+        }
+
+        private string GetImagePath(string btwPath)
+        {
+            return GetImagePath(btwPath, "PNG");
         }
 
         private string GetImagePath(
-            string btwPath)
+            string btwPath,
+            string imageExtension)
         {
             string key;
 
-            using (SHA1 sha =
-                SHA1.Create())
+            using (SHA1 sha = SHA1.Create())
             {
-                byte[] bytes =
-                    Encoding.UTF8.GetBytes(
-                        Path.GetFullPath(btwPath)
-                            .ToUpperInvariant());
+                byte[] bytes = Encoding.UTF8.GetBytes(
+                    Path.GetFullPath(btwPath).ToUpperInvariant());
 
-                key =
-                    BitConverter.ToString(
-                        sha.ComputeHash(bytes))
-                    .Replace("-", "")
-                    .Substring(0, 20);
+                key = BitConverter.ToString(sha.ComputeHash(bytes))
+                    .Replace("-", "").Substring(0, 20);
             }
 
-            string safeName =
-                Path.GetFileNameWithoutExtension(
-                    btwPath);
+            string safe = Path.GetFileNameWithoutExtension(btwPath);
+            foreach (char invalid in Path.GetInvalidFileNameChars())
+                safe = safe.Replace(invalid, '_');
 
-            foreach (char invalid
-                in Path.GetInvalidFileNameChars())
-                safeName =
-                    safeName.Replace(
-                        invalid,
-                        '_');
+            if (string.IsNullOrWhiteSpace(safe))
+                safe = "BTW_Image";
 
-            if (string.IsNullOrWhiteSpace(
-                safeName))
-                safeName = "BTW_Image";
+            string folder = Path.Combine(imageFolder, key);
 
-            string folder =
-                Path.Combine(
-                    imageFolder,
-                    key);
+            string extension =
+                BtwImageLibraryModuleSettings.NormalizeExtension(
+                    imageExtension);
+
+            string fileExtension =
+                extension == "JPG" ? ".jpg" :
+                extension == "BMP" ? ".bmp" :
+                extension == "TIFF" ? ".tif" :
+                ".png";
 
             return Path.Combine(
                 folder,
-                safeName + ".png");
-        }
-
-        private sealed class ExtractionJob
-        {
-            public string FilePath;
-            public FileInfo FileInfo;
-            public BtwImageLibraryRecord Previous;
-            public string OutputPath;
-        }
-
-        private sealed class BarcodeJob
-        {
-            public string FilePath;
-            public string ImagePath;
-            public BtwImageLibraryRecord BaseRecord;
+                safe + fileExtension);
         }
     }
 }
