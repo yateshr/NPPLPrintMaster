@@ -1,0 +1,63 @@
+<svg width="1200" height="650" viewBox="0 0 1200 650" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <filter id="s" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#111827" flood-opacity="0.18"/>
+  </filter>
+</defs>
+<rect width="1200" height="650" rx="22" fill="#F8FAFC"/>
+<rect x="44" y="36" width="1112" height="578" rx="20" fill="white" stroke="#CBD5E1" filter="url(#s)"/>
+<rect x="44" y="36" width="1112" height="62" rx="20" fill="#0F172A"/>
+<text x="72" y="75" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">NPPLPrintMaster</text>
+<circle cx="1084" cy="67" r="7" fill="#38BDF8"/>
+<circle cx="1110" cy="67" r="7" fill="#6366F1"/>
+
+<rect x="44" y="98" width="210" height="516" fill="#111827"/>
+<g font-family="Segoe UI, Arial, sans-serif" font-size="15">
+  <text x="76" y="138" fill="#94A3B8">WORKSPACE</text>
+  <rect x="64" y="156" width="170" height="40" rx="10" fill="#1E293B"/>
+  <text x="84" y="182" fill="#E2E8F0">Home</text>
+  <text x="84" y="228" fill="#CBD5E1">Extraction</text>
+  <text x="84" y="270" fill="#CBD5E1">Formatting</text>
+  <text x="84" y="312" fill="#CBD5E1">Quick Job Card</text>
+  <rect x="64" y="326" width="170" height="40" rx="10" fill="#172554" stroke="#38BDF8"/>
+  <text x="84" y="352" fill="#E0F2FE" font-weight="600">BTW Image Library</text>
+  <text x="84" y="398" fill="#CBD5E1">Freeform Builder</text>
+  <text x="84" y="440" fill="#CBD5E1">Settings</text>
+</g>
+
+<rect x="286" y="124" width="834" height="56" rx="12" fill="#F1F5F9"/>
+<text x="308" y="158" fill="#475569" font-family="Segoe UI, Arial, sans-serif" font-size="15">Barcode / Product / BTW filename / Path</text>
+<rect x="950" y="136" width="146" height="32" rx="9" fill="#0F172A"/>
+<text x="1023" y="157" text-anchor="middle" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="600">Search</text>
+
+<rect x="286" y="200" width="504" height="330" rx="14" fill="#F8FAFC" stroke="#E2E8F0"/>
+<text x="308" y="230" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Search Results</text>
+
+<g font-family="Segoe UI, Arial, sans-serif" font-size="13">
+  <circle cx="322" cy="266" r="6" fill="#22C55E"/><text x="342" y="271" fill="#334155">Product Label — Ready</text>
+  <circle cx="322" cy="312" r="6" fill="#22C55E"/><text x="342" y="317" fill="#334155">Carton Label — Ready</text>
+  <circle cx="322" cy="358" r="6" fill="#F59E0B"/><text x="342" y="363" fill="#334155">Template Pending — New</text>
+  <circle cx="322" cy="404" r="6" fill="#EF4444"/><text x="342" y="409" fill="#334155">Missing Image — Error</text>
+</g>
+
+<rect x="308" y="444" width="452" height="62" rx="10" fill="white" stroke="#E2E8F0"/>
+<text x="328" y="470" fill="#64748B" font-family="Segoe UI, Arial, sans-serif" font-size="12">Barcode</text>
+<text x="328" y="492" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">8901234567890</text>
+
+<rect x="812" y="200" width="308" height="330" rx="14" fill="#F8FAFC" stroke="#E2E8F0"/>
+<text x="834" y="230" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700">Selected BTW</text>
+<rect x="850" y="252" width="232" height="174" rx="10" fill="white" stroke="#CBD5E1"/>
+<rect x="884" y="282" width="164" height="92" rx="6" fill="#EEF2FF"/>
+<rect x="902" y="300" width="128" height="13" rx="6" fill="#C7D2FE"/>
+<rect x="902" y="324" width="98" height="10" rx="5" fill="#CBD5E1"/>
+<rect x="902" y="344" width="120" height="10" rx="5" fill="#CBD5E1"/>
+<rect x="834" y="446" width="92" height="34" rx="8" fill="#0F172A"/>
+<rect x="936" y="446" width="92" height="34" rx="8" fill="#E2E8F0"/>
+<rect x="1038" y="446" width="64" height="34" rx="8" fill="#DBEAFE"/>
+<text x="880" y="468" fill="white" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600">Open BTW</text>
+<text x="982" y="468" fill="#334155" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600">Folder</text>
+<text x="1070" y="468" fill="#1D4ED8" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600">Use</text>
+
+<rect x="286" y="554" width="834" height="36" rx="10" fill="#0F172A"/>
+<text x="308" y="577" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="12">Ready • Indexed 1,248 templates • 12 images pending • 2 duplicate barcodes</text>
+</svg>
