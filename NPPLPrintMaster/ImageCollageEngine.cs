@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -37,25 +38,38 @@ namespace NPPLPrintMaster
     {
         private const int PdfDpi = 300;
 
+        // page:        the grid, orientation, borders, text size and the
+        //              page header / footer.
+        // displayMode: which text is printed under each image ("Filename",
+        //              "Both", "Remark" or "None").
+        // manualSlotPaths, when given, is a manual arrangement: one entry
+        // per grid cell in reading order, null for an empty cell.
         public static CollageGenerationResult Generate(
             IList<string> imageFiles,
             string outputPath,
             string outputType,
-            int gridSize,
-            bool landscape,
-            bool showFilename,
-            bool drawBorders,
+            CollagePageSetup page,
             IProgress<string> progress,
             IList<string> manualSlotPaths = null,
             IDictionary<string, string> manualCaptions = null,
             IDictionary<string, string> manualCustomNames = null,
-            string manualDisplayMode = "Filename")
+            string displayMode = "Filename",
+            IDictionary<string, string> manualNotes = null)
         {
             if (imageFiles == null || imageFiles.Count == 0)
                 throw new ArgumentException("No images were supplied.");
 
-            if (gridSize < 1 || gridSize > 4)
-                throw new ArgumentOutOfRangeException("gridSize");
+            if (page == null)
+                throw new ArgumentNullException("page");
+
+            page = page.Clone();
+            page.Normalize();
+
+            bool showFilename =
+                !string.Equals(
+                    displayMode,
+                    CollageCellLayout.ModeNone,
+                    StringComparison.OrdinalIgnoreCase);
 
             List<CollageImageInfo> images =
                 ReadImageInformation(imageFiles, progress);
@@ -105,6 +119,7 @@ namespace NPPLPrintMaster
                     BuildManualRenderImages(
                         sorted,
                         manualSlotPaths,
+                        page.CellsPerPage,
                         progress);
 
                 Report(
@@ -112,7 +127,7 @@ namespace NPPLPrintMaster
                     "[COLLAGE] Manual arrangement: " +
                     renderImages.Count(i => i != null && !string.IsNullOrWhiteSpace(i.Path)) +
                     " assigned image(s) across " +
-                    (int)Math.Ceiling(renderImages.Count / (double)(gridSize * gridSize)) +
+                    (int)Math.Ceiling(renderImages.Count / (double)page.CellsPerPage) +
                     " page(s).");
             }
 
@@ -121,24 +136,28 @@ namespace NPPLPrintMaster
                 GeneratePdf(
                     renderImages,
                     outputPath,
-                    gridSize,
-                    landscape,
-                    showFilename,
-                    drawBorders,
+                    page,
                     progress,
                     manualCaptions,
                     manualCustomNames,
-                    manualDisplayMode);
+                    displayMode,
+                    manualNotes,
+                    BuildLayout(
+                        sorted,
+                        renderImages,
+                        page,
+                        manualCaptions,
+                        manualCustomNames,
+                        displayMode,
+                        manualNotes));
             }
             else if (outputType.Equals("Word", StringComparison.OrdinalIgnoreCase))
             {
                 GenerateWordDocx(
                     sorted,
                     outputPath,
-                    gridSize,
-                    landscape,
+                    page,
                     showFilename,
-                    drawBorders,
                     progress);
             }
             else if (outputType.Equals("Excel", StringComparison.OrdinalIgnoreCase))
@@ -146,10 +165,8 @@ namespace NPPLPrintMaster
                 GenerateExcel(
                     sorted,
                     outputPath,
-                    gridSize,
-                    landscape,
+                    page,
                     showFilename,
-                    drawBorders,
                     progress);
             }
             else
@@ -171,6 +188,79 @@ namespace NPPLPrintMaster
             };
         }
 
+        public static bool IsSupportedImageFile(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            string extension;
+
+            try
+            {
+                extension = System.IO.Path.GetExtension(path).ToLowerInvariant();
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+
+            return extension == ".png" ||
+                   extension == ".jpg" ||
+                   extension == ".jpeg" ||
+                   extension == ".bmp" ||
+                   extension == ".tif" ||
+                   extension == ".tiff";
+        }
+
+        // Describes the arrangement being written so it can be stored in
+        // the PDF and imported again later for further editing.
+        private static CollageLayout BuildLayout(
+            IList<CollageImageInfo> allImages,
+            IList<CollageImageInfo> renderImages,
+            CollagePageSetup page,
+            IDictionary<string, string> captions,
+            IDictionary<string, string> customNames,
+            string displayMode,
+            IDictionary<string, string> notes)
+        {
+            CollageLayout layout =
+                new CollageLayout
+                {
+                    Page = page.Clone(),
+                    DisplayMode = displayMode
+                };
+
+            foreach (CollageImageInfo info in allImages)
+            {
+                layout.Images.Add(info.Path);
+
+                string remark = null;
+
+                if (customNames != null)
+                    customNames.TryGetValue(info.Path, out remark);
+
+                if (string.IsNullOrWhiteSpace(remark) && captions != null)
+                    captions.TryGetValue(info.Path, out remark);
+
+                if (!string.IsNullOrWhiteSpace(remark))
+                    layout.Remarks[info.Path] = remark;
+
+                string note;
+
+                if (notes != null &&
+                    notes.TryGetValue(info.Path, out note) &&
+                    !string.IsNullOrWhiteSpace(note))
+                {
+                    layout.Notes[info.Path] = note;
+                }
+            }
+
+            foreach (CollageImageInfo info in renderImages)
+                layout.Slots.Add(info == null ? null : info.Path);
+
+            return layout;
+        }
+
         // Returns the same deterministic order used by the normal collage
         // generator. The manual arrangement editor uses this so the first
         // manual layout exactly matches the existing automatic layout.
@@ -178,8 +268,11 @@ namespace NPPLPrintMaster
             IList<string> imageFiles,
             IProgress<string> progress = null)
         {
+            // Only the pixel size is needed for ordering, so the files are
+            // not fully decoded here. This keeps opening the arrangement
+            // workspace quick with large image sets.
             List<CollageImageInfo> images =
-                ReadImageInformation(imageFiles, progress);
+                ReadImageInformation(imageFiles, progress, true);
 
             if (images.Count == 0)
                 return new List<string>();
@@ -206,6 +299,7 @@ namespace NPPLPrintMaster
         private static List<CollageImageInfo> BuildManualRenderImages(
             IList<CollageImageInfo> sorted,
             IList<string> manualSlotPaths,
+            int cellsPerPage,
             IProgress<string> progress)
         {
             Dictionary<string, CollageImageInfo> byPath =
@@ -254,12 +348,23 @@ namespace NPPLPrintMaster
                 result.Add(info);
             }
 
+            // The arrangement may have been made for a different grid. The
+            // cells keep their order; empty cells after the last image are
+            // dropped so no blank page is printed, then the last page is
+            // filled out so all of its cell borders are drawn.
+            while (result.Count > 0 && result[result.Count - 1] == null)
+                result.RemoveAt(result.Count - 1);
+
+            while (result.Count % cellsPerPage != 0)
+                result.Add(null);
+
             return result;
         }
 
         private static List<CollageImageInfo> ReadImageInformation(
             IList<string> imageFiles,
-            IProgress<string> progress)
+            IProgress<string> progress,
+            bool headerOnly = false)
         {
             List<CollageImageInfo> result =
                 new List<CollageImageInfo>();
@@ -270,7 +375,14 @@ namespace NPPLPrintMaster
 
                 try
                 {
-                    using (Image img = Image.FromFile(file))
+                    using (FileStream stream =
+                        new FileStream(
+                            file,
+                            FileMode.Open,
+                            FileAccess.Read,
+                            FileShare.Read))
+                    using (Image img =
+                        Image.FromStream(stream, false, !headerOnly))
                     {
                         result.Add(
                             new CollageImageInfo
@@ -316,17 +428,18 @@ namespace NPPLPrintMaster
         private static void GeneratePdf(
             IList<CollageImageInfo> images,
             string outputPath,
-            int gridSize,
-            bool landscape,
-            bool showFilename,
-            bool drawBorders,
+            CollagePageSetup page,
             IProgress<string> progress,
             IDictionary<string, string> captions,
             IDictionary<string, string> customNames,
-            string displayMode)
+            string displayMode,
+            IDictionary<string, string> notes,
+            CollageLayout layout)
         {
             const double a4WidthInches = 8.2677165354;
             const double a4HeightInches = 11.6929133858;
+
+            bool landscape = page.Landscape;
 
             int pagePixelWidth =
                 (int)Math.Round(
@@ -344,21 +457,14 @@ namespace NPPLPrintMaster
             double pageHeightPoints =
                 (landscape ? a4WidthInches : a4HeightInches) * 72.0;
 
-            bool showCaption =
-                !string.Equals(displayMode, "None", StringComparison.OrdinalIgnoreCase) &&
-                (showFilename ||
-                 string.Equals(displayMode, "Remark", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(displayMode, "Both", StringComparison.OrdinalIgnoreCase) ||
-                 (captions != null &&
-                  captions.Any(
-                      p => !string.IsNullOrWhiteSpace(p.Value))));
-
-            int perPage = gridSize * gridSize;
+            int perPage = page.CellsPerPage;
             List<byte[]> jpegPages = new List<byte[]>();
 
             int totalPages =
                 (int)Math.Ceiling(
                     images.Count / (double)perPage);
+
+            DateTime printedOn = DateTime.Now;
 
             for (int pageIndex = 0;
                  pageIndex < totalPages;
@@ -384,18 +490,26 @@ namespace NPPLPrintMaster
                         g.PixelOffsetMode =
                             PixelOffsetMode.HighQuality;
 
+                        // Plain anti-aliasing prints cleanly; the screen
+                        // default (ClearType) leaves colored fringes on
+                        // the image names.
+                        g.TextRenderingHint =
+                            TextRenderingHint.AntiAlias;
+
                         DrawCollagePage(
                             g,
                             pagePixelWidth,
                             pagePixelHeight,
                             images,
                             pageIndex * perPage,
-                            gridSize,
-                            showCaption,
-                            drawBorders,
+                            page,
                             captions,
                             customNames,
-                            displayMode);
+                            displayMode,
+                            notes,
+                            pageIndex + 1,
+                            totalPages,
+                            printedOn);
                     }
 
                     jpegPages.Add(
@@ -413,13 +527,38 @@ namespace NPPLPrintMaster
                     " rendered");
             }
 
+            // The arrangement travels inside the PDF, so this file can be
+            // imported later to revise it. Never let that stop the PDF
+            // itself from being written.
+            byte[] layoutObject = null;
+
+            try
+            {
+                if (layout != null)
+                {
+                    layoutObject =
+                        CollageLayoutFile.BuildPdfObject(
+                            layout,
+                            System.IO.Path.GetDirectoryName(outputPath));
+                }
+            }
+            catch (Exception ex)
+            {
+                Report(
+                    progress,
+                    "[PDF] The layout could not be stored in the PDF (" +
+                    ex.Message +
+                    "). The PDF is complete but cannot be re-imported.");
+            }
+
             WriteJpegPagesToPdf(
                 jpegPages,
                 pagePixelWidth,
                 pagePixelHeight,
                 pageWidthPoints,
                 pageHeightPoints,
-                outputPath);
+                outputPath,
+                layoutObject);
 
             Report(
                 progress,
@@ -432,72 +571,45 @@ namespace NPPLPrintMaster
             int pageHeight,
             IList<CollageImageInfo> images,
             int startIndex,
-            int gridSize,
-            bool showFilename,
-            bool drawBorders,
+            CollagePageSetup setup,
             IDictionary<string, string> captions,
             IDictionary<string, string> customNames,
-            string displayMode)
+            string displayMode,
+            IDictionary<string, string> notes,
+            int pageNumber,
+            int pageCount,
+            DateTime printedOn)
         {
-            int outerMargin =
-                (int)Math.Round(20.0 / 72.0 * PdfDpi);
+            // Cell geometry and the placement of the image and its name come
+            // from CollageCellLayout, which the arrangement workspace also
+            // uses, so the workspace preview matches this output exactly.
+            float unitsPerPoint = PdfDpi / 72f;
 
-            int innerMargin =
-                (int)Math.Round(10.0 / 72.0 * PdfDpi);
+            RectangleF page =
+                new RectangleF(0f, 0f, pageWidth, pageHeight);
 
-            bool showOriginalFilename =
-                string.Equals(displayMode, "Filename", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(displayMode, "Both", StringComparison.OrdinalIgnoreCase);
-            bool showRemark =
-                string.Equals(displayMode, "Remark", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(displayMode, "Both", StringComparison.OrdinalIgnoreCase);
-
-            bool hasAnyRemark =
-                captions != null &&
-                captions.Any(
-                    p => !string.IsNullOrWhiteSpace(p.Value));
-
-            int captionLineHeight =
-                (int)Math.Round(16.0 / 72.0 * PdfDpi);
-
-            int filenameHeight =
-                showOriginalFilename
-                    ? captionLineHeight
-                    : 0;
-            int remarkHeight =
-                showRemark
-                    ? captionLineHeight
-                    : 0;
-
-            int captionAreaHeight =
-                filenameHeight + remarkHeight;
-
-            int usableWidth =
-                pageWidth - (outerMargin * 2);
-
-            int usableHeight =
-                pageHeight - (outerMargin * 2);
-
-            float cellWidth =
-                usableWidth / (float)gridSize;
-
-            float cellHeight =
-                usableHeight / (float)gridSize;
+            CollageCellLayout.DrawHeaderFooter(
+                g,
+                page,
+                unitsPerPoint,
+                setup,
+                pageNumber,
+                pageCount,
+                printedOn);
 
             using (Pen borderPen = new Pen(Color.Gray, 2f))
             using (Font filenameFont =
-                new Font("Arial", 8f, FontStyle.Regular, GraphicsUnit.Point))
+                new Font(
+                    CollageCellLayout.CaptionFontFamily,
+                    setup.CaptionFontPoints * unitsPerPoint,
+                    FontStyle.Regular,
+                    GraphicsUnit.Pixel))
             using (SolidBrush textBrush =
                 new SolidBrush(Color.Black))
-            using (StringFormat centerText =
-                new StringFormat
-                {
-                    Alignment = StringAlignment.Center,
-                    LineAlignment = StringAlignment.Center,
-                    Trimming = StringTrimming.EllipsisCharacter
-                })
+            using (StringFormat captionFormat =
+                CollageCellLayout.CreateCaptionFormat())
             {
-                int perPage = gridSize * gridSize;
+                int perPage = setup.CellsPerPage;
 
                 for (int slot = 0; slot < perPage; slot++)
                 {
@@ -506,36 +618,20 @@ namespace NPPLPrintMaster
                     if (imageIndex >= images.Count)
                         break;
 
-                    int row = slot / gridSize;
-                    int col = slot % gridSize;
-
                     RectangleF cell =
-                        new RectangleF(
-                            outerMargin + (col * cellWidth),
-                            outerMargin + (row * cellHeight),
-                            cellWidth,
-                            cellHeight);
+                        CollageCellLayout.GetCellBounds(
+                            page,
+                            unitsPerPoint,
+                            setup,
+                            slot);
 
-                    if (drawBorders)
+                    if (setup.DrawBorders)
                         g.DrawRectangle(
                             borderPen,
                             cell.X,
                             cell.Y,
                             cell.Width,
                             cell.Height);
-
-                    RectangleF imageArea =
-                        new RectangleF(
-                            cell.X + innerMargin,
-                            cell.Y + innerMargin,
-                            Math.Max(
-                                1,
-                                cell.Width - (innerMargin * 2)),
-                            Math.Max(
-                                1,
-                                cell.Height -
-                                (innerMargin * 2) -
-                                captionAreaHeight));
 
                     CollageImageInfo info =
                         images[imageIndex];
@@ -549,31 +645,6 @@ namespace NPPLPrintMaster
 
                     try
                     {
-                        RectangleF drawRect;
-
-                        using (Image image =
-                            Image.FromFile(info.Path))
-                        {
-                            drawRect =
-                                CalculateFitRectangle(
-                                    image.Width,
-                                    image.Height,
-                                    imageArea);
-
-                            Rectangle drawRectPixels =
-                                Rectangle.Round(drawRect);
-
-                            g.DrawImage(
-                                image,
-                                drawRectPixels,
-                                new Rectangle(
-                                    0,
-                                    0,
-                                    image.Width,
-                                    image.Height),
-                                GraphicsUnit.Pixel);
-                        }
-
                         string remark = null;
 
                         if (customNames != null)
@@ -585,60 +656,85 @@ namespace NPPLPrintMaster
                             captions.TryGetValue(info.Path, out remark);
                         }
 
-                        if (string.IsNullOrWhiteSpace(remark))
-                        {
-                            remark =
-                                System.IO.Path.GetFileNameWithoutExtension(
-                                    info.Path);
-                        }
+                        string note = null;
 
-                        bool drawFilename = showOriginalFilename;
-                        bool drawRemark = showRemark;
+                        if (notes != null)
+                            notes.TryGetValue(info.Path, out note);
 
                         // The filename line is always the original source
-                        // filename. The editable custom remark is independent
-                        // and is shown on the second line when selected.
-                        string displayFilename =
-                            System.IO.Path.GetFileNameWithoutExtension(
-                                info.Path);
+                        // filename. The editable custom remark is shown on
+                        // the line below it, unless it is still the same
+                        // text, in which case the name is printed once. The
+                        // additional remark, if any, gets a line of its own.
+                        string filenameLine;
+                        string remarkLine;
+                        string noteLine;
 
-                        if (drawFilename || drawRemark)
+                        CollageCellLayout.ResolveCaptions(
+                            info.Path,
+                            remark,
+                            note,
+                            displayMode,
+                            out filenameLine,
+                            out remarkLine,
+                            out noteLine);
+
+                        using (Image image =
+                            Image.FromFile(info.Path))
                         {
-                            float textY =
-                                cell.Bottom -
-                                captionAreaHeight +
-                                Math.Max(
-                                    2f,
-                                    (float)Math.Round(
-                                        2.0 / 72.0 * PdfDpi));
+                            // The name sits directly below the image,
+                            // centered, and the pair is centered in the cell.
+                            CollageCellLayout layout =
+                                CollageCellLayout.Arrange(
+                                    g,
+                                    filenameFont,
+                                    captionFormat,
+                                    cell,
+                                    unitsPerPoint,
+                                    image.Width,
+                                    image.Height,
+                                    filenameLine,
+                                    remarkLine,
+                                    noteLine);
 
-                            if (drawFilename)
+                            g.DrawImage(
+                                image,
+                                Rectangle.Round(layout.Image),
+                                new Rectangle(
+                                    0,
+                                    0,
+                                    image.Width,
+                                    image.Height),
+                                GraphicsUnit.Pixel);
+
+                            if (filenameLine != null)
                             {
                                 g.DrawString(
-                                    displayFilename,
+                                    filenameLine,
                                     filenameFont,
                                     textBrush,
-                                    new RectangleF(
-                                        cell.X,
-                                        textY,
-                                        cell.Width,
-                                        filenameHeight),
-                                    centerText);
-                                textY += filenameHeight;
+                                    layout.Filename,
+                                    captionFormat);
                             }
 
-                            if (drawRemark)
+                            if (remarkLine != null)
                             {
                                 g.DrawString(
-                                    remark,
+                                    remarkLine,
                                     filenameFont,
                                     textBrush,
-                                    new RectangleF(
-                                        cell.X,
-                                        textY,
-                                        cell.Width,
-                                        remarkHeight),
-                                    centerText);
+                                    layout.Remark,
+                                    captionFormat);
+                            }
+
+                            if (noteLine != null)
+                            {
+                                g.DrawString(
+                                    noteLine,
+                                    filenameFont,
+                                    textBrush,
+                                    layout.Note,
+                                    captionFormat);
                             }
                         }
                     }
@@ -650,29 +746,6 @@ namespace NPPLPrintMaster
                     }
                 }
             }
-        }
-
-        private static RectangleF CalculateFitRectangle(
-            int sourceWidth,
-            int sourceHeight,
-            RectangleF target)
-        {
-            double scale =
-                Math.Min(
-                    target.Width / Math.Max(1.0, sourceWidth),
-                    target.Height / Math.Max(1.0, sourceHeight));
-
-            float width =
-                (float)(sourceWidth * scale);
-
-            float height =
-                (float)(sourceHeight * scale);
-
-            return new RectangleF(
-                target.X + ((target.Width - width) / 2f),
-                target.Y + ((target.Height - height) / 2f),
-                width,
-                height);
         }
 
         private static byte[] SaveJpegToBytes(
@@ -721,7 +794,8 @@ namespace NPPLPrintMaster
             int imagePixelHeight,
             double pageWidthPoints,
             double pageHeightPoints,
-            string outputPath)
+            string outputPath,
+            byte[] layoutObject = null)
         {
             int pageCount = jpegPages.Count;
 
@@ -733,13 +807,21 @@ namespace NPPLPrintMaster
             for (int i = 0; i < pageCount; i++)
                 pageObjects.Add(3 + (i * 3));
 
+            // The saved arrangement, when there is one, is the last object
+            // in the file and is referenced from the catalog.
+            int layoutObjectNumber = 3 + (pageCount * 3);
+
             List<byte[]> objects = new List<byte[]>();
 
             objects.Add(
                 Ascii(
                     "<< /Type /Catalog /Pages " +
                     pagesObject +
-                    " 0 R >>"));
+                    " 0 R" +
+                    (layoutObject == null
+                        ? string.Empty
+                        : " /NPPLCollageLayout " + layoutObjectNumber + " 0 R") +
+                    " >>"));
 
             StringBuilder kids =
                 new StringBuilder();
@@ -826,6 +908,9 @@ namespace NPPLPrintMaster
                         contentBytes,
                         Ascii("endstream")));
             }
+
+            if (layoutObject != null)
+                objects.Add(layoutObject);
 
             using (FileStream fs =
                 new FileStream(
@@ -918,14 +1003,15 @@ namespace NPPLPrintMaster
         private static void GenerateWordDocx(
             IList<CollageImageInfo> images,
             string outputPath,
-            int gridSize,
-            bool landscape,
+            CollagePageSetup page,
             bool showFilename,
-            bool drawBorders,
             IProgress<string> progress)
         {
             const double a4WidthInches = 8.2677165354;
             const double a4HeightInches = 11.6929133858;
+
+            bool landscape = page.Landscape;
+            DateTime printedOn = DateTime.Now;
 
             int pagePixelWidth =
                 (int)Math.Round(
@@ -938,7 +1024,7 @@ namespace NPPLPrintMaster
                     PdfDpi);
 
             int perPage =
-                gridSize * gridSize;
+                page.CellsPerPage;
 
             int totalPages =
                 (int)Math.Ceiling(
@@ -1002,6 +1088,8 @@ namespace NPPLPrintMaster
                                 SmoothingMode.HighQuality;
                             g.PixelOffsetMode =
                                 PixelOffsetMode.HighQuality;
+                            g.TextRenderingHint =
+                                TextRenderingHint.AntiAlias;
 
                             DrawCollagePage(
                                 g,
@@ -1009,12 +1097,16 @@ namespace NPPLPrintMaster
                                 pagePixelHeight,
                                 images,
                                 pageIndex * perPage,
-                                gridSize,
-                                showFilename,
-                                drawBorders,
+                                page,
                                 null,
                                 null,
-                                "Filename");
+                                showFilename
+                                    ? CollageCellLayout.ModeFilename
+                                    : CollageCellLayout.ModeNone,
+                                null,
+                                pageIndex + 1,
+                                totalPages,
+                                printedOn);
                         }
 
                         using (MemoryStream imageStream =
@@ -1148,12 +1240,15 @@ namespace NPPLPrintMaster
         private static void GenerateExcel(
             IList<CollageImageInfo> images,
             string outputPath,
-            int gridSize,
-            bool landscape,
+            CollagePageSetup page,
             bool showFilename,
-            bool drawBorders,
             IProgress<string> progress)
         {
+            // A worksheet is one continuous grid, so only the number of
+            // columns applies; rows simply continue down the sheet.
+            int gridSize = page.Columns;
+            bool drawBorders = page.DrawBorders;
+
             XSSFWorkbook workbook =
                 new XSSFWorkbook();
 
@@ -1164,7 +1259,19 @@ namespace NPPLPrintMaster
                         "Image Collage");
 
                 sheet.PrintSetup.Landscape =
-                    landscape;
+                    page.Landscape;
+
+                // Excel prints its own header and footer; "&P of &N" is
+                // filled in by Excel with the page numbers.
+                if (page.HasHeader)
+                    sheet.Header.Center = page.HeaderText;
+
+                if (page.ShowDate)
+                    sheet.Footer.Left =
+                        CollageCellLayout.FormatDate(DateTime.Now);
+
+                if (page.ShowPageNumbers)
+                    sheet.Footer.Right = "Page &P of &N";
 
                 // A4 paper size (Excel/BIFF paper-size code 9).
                 sheet.PrintSetup.PaperSize = 9;
@@ -1221,7 +1328,9 @@ namespace NPPLPrintMaster
                 IFont fileNameFont =
                     workbook.CreateFont();
 
-                fileNameFont.FontHeightInPoints = 9;
+                // One point above the printed size, as before (8 pt -> 9).
+                fileNameFont.FontHeightInPoints =
+                    Math.Round(page.CaptionFontPoints) + 1;
                 cellStyle.SetFont(fileNameFont);
 
                 var drawing =

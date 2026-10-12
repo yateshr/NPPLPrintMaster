@@ -55,6 +55,82 @@ namespace NPPLPrintMaster
                 .ToList();
         }
 
+        // Goes back to the automatic arrangement. Called whenever the image
+        // source or the grid changes, because a manual arrangement only
+        // makes sense for the images and grid it was made with.
+        private void ResetManualCollageArrangement()
+        {
+            manualCollageSlots = null;
+            manualCollageCaptions = null;
+            manualCollageCustomNames = null;
+            manualCollageNotes = null;
+            UpdateCollageArrangementButtons();
+        }
+
+        // Everything about the sheet, as chosen on this page.
+        private CollagePageSetup GetCollagePageSetup()
+        {
+            return new CollagePageSetup
+            {
+                Columns = cmbCollageColumns.SelectedIndex + 1,
+                Rows = cmbCollageRows.SelectedIndex + 1,
+                Landscape =
+                    cmbCollageOrientation.SelectedItem != null &&
+                    string.Equals(
+                        cmbCollageOrientation.SelectedItem.ToString(),
+                        "Landscape",
+                        StringComparison.OrdinalIgnoreCase),
+                DrawBorders = chkCollageBorders.Checked,
+                CaptionFontPoints =
+                    CollagePageSetup.CaptionFontChoices[
+                        Math.Max(0, cmbCollageTextSize.SelectedIndex)],
+                HeaderText = txtCollageHeader.Text.Trim(),
+                ShowDate = chkCollageDate.Checked,
+                ShowPageNumbers = chkCollagePageNumbers.Checked
+            };
+        }
+
+        // Shows a page setup that came back from the arrangement workspace
+        // or from an imported layout.
+        private void ApplyCollagePageSetup(CollagePageSetup page)
+        {
+            if (page == null)
+                return;
+
+            page = page.Clone();
+            page.Normalize();
+
+            cmbCollageColumns.SelectedIndex = page.Columns - 1;
+            cmbCollageRows.SelectedIndex = page.Rows - 1;
+            cmbCollageOrientation.SelectedIndex = page.Landscape ? 1 : 0;
+            chkCollageBorders.Checked = page.DrawBorders;
+            cmbCollageTextSize.SelectedIndex =
+                CollagePageSetup.NearestCaptionFontChoice(page.CaptionFontPoints);
+            txtCollageHeader.Text = page.HeaderText;
+            chkCollageDate.Checked = page.ShowDate;
+            chkCollagePageNumbers.Checked = page.ShowPageNumbers;
+        }
+
+        // Which text is printed under each image. The check box switches
+        // all of it on or off. With a manual arrangement the workspace
+        // decides which lines are shown; otherwise it is the file name.
+        private string GetCollageTextMode(bool manualArrangement)
+        {
+            if (!chkCollageShowFilename.Checked)
+                return "None";
+
+            if (!manualArrangement)
+                return "Filename";
+
+            return string.IsNullOrWhiteSpace(manualCollageDisplayMode) ||
+                   string.Equals(
+                       manualCollageDisplayMode,
+                       "None",
+                       StringComparison.OrdinalIgnoreCase)
+                ? "Both"
+                : manualCollageDisplayMode;
+        }
+
         private void UpdateCollageArrangementButtons()
         {
             if (btnArrangeCollage == null)
@@ -119,12 +195,21 @@ namespace NPPLPrintMaster
                 return;
             }
 
-            int gridSize =
-                cmbCollageGrid.SelectedIndex + 1;
+            List<string> defaultOrder;
 
-            List<string> defaultOrder =
-                ImageCollageEngine.GetDefaultOrderedImagePaths(
-                    filesToProcess);
+            Cursor previousCursor = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+
+            try
+            {
+                defaultOrder =
+                    ImageCollageEngine.GetDefaultOrderedImagePaths(
+                        filesToProcess);
+            }
+            finally
+            {
+                Cursor.Current = previousCursor;
+            }
 
             if (defaultOrder.Count == 0)
             {
@@ -141,25 +226,43 @@ namespace NPPLPrintMaster
                     ? defaultOrder
                     : manualCollageSlots;
 
-            bool landscape =
-                cmbCollageOrientation.SelectedItem != null &&
-                string.Equals(
-                    cmbCollageOrientation.SelectedItem.ToString(),
-                    "Landscape",
-                    StringComparison.OrdinalIgnoreCase);
-
             using (CollageArrangementForm form =
                 new CollageArrangementForm(
                     defaultOrder,
-                    gridSize,
-                    landscape,
+                    GetCollagePageSetup(),
                     currentSettings,
                     initialSlots,
                     manualCollageCaptions,
-                    manualCollageCustomNames))
+                    manualCollageCustomNames,
+                    GetCollageTextMode(true),
+                    manualCollageNotes))
             {
                 if (form.ShowDialog(this) == DialogResult.OK)
                 {
+                    // The grid and the text size can be changed in the
+                    // workspace; show what was chosen there.
+                    ApplyCollagePageSetup(form.ResultPage);
+                    // Images were added or removed in the workspace: from
+                    // now on the collage is made from exactly that list.
+                    if (form.ResultImages != null &&
+                        !new HashSet<string>(
+                            defaultOrder,
+                            StringComparer.OrdinalIgnoreCase)
+                            .SetEquals(form.ResultImages))
+                    {
+                        selectedCollageFiles = form.ResultImages.ToArray();
+                        selectedCollageFolder = "";
+                        txtCollageSource.Text =
+                            selectedCollageFiles.Length + " image(s) selected";
+                    }
+
+                    manualCollageNotes =
+                        form.ResultNotes == null
+                            ? null
+                            : new Dictionary<string, string>(
+                                form.ResultNotes,
+                                StringComparer.OrdinalIgnoreCase);
+
                     manualCollageSlots =
                         form.ResultSlots == null
                             ? null
@@ -184,6 +287,14 @@ namespace NPPLPrintMaster
                             ? "Both"
                             : form.ResultDisplayMode;
 
+                    // "No text" in the workspace and the check box here are
+                    // the same switch.
+                    chkCollageShowFilename.Checked =
+                        !string.Equals(
+                            manualCollageDisplayMode,
+                            "None",
+                            StringComparison.OrdinalIgnoreCase);
+
                     UpdateCollageArrangementButtons();
 
                     int assigned =
@@ -201,6 +312,206 @@ namespace NPPLPrintMaster
             }
         }
 
+        // ------------------------------------------------------------
+        // Importing a saved arrangement
+        //
+        // Every collage PDF carries its own arrangement, so a PDF made
+        // earlier (or a layout saved from the workspace) can be opened
+        // again to revise it: change a remark, move or add an image, and
+        // create the PDF again.
+        // ------------------------------------------------------------
+        private void BtnImportCollageLayout_Click(object sender, EventArgs e)
+        {
+            string path;
+
+            using (OpenFileDialog ofd = new OpenFileDialog
+            {
+                Title = "Import a collage to continue editing it",
+                Filter =
+                    "Collage PDF or saved layout|*.pdf;*" +
+                    CollageLayoutFile.Extension +
+                    "|All files|*.*"
+            })
+            {
+                if (DialogMemoryManager.ShowOpenDialog(
+                    ofd,
+                    "Collage.ImportLayout") != DialogResult.OK)
+                    return;
+
+                path = ofd.FileName;
+            }
+
+            // Straight into the workspace to edit it.
+            if (ImportCollageLayout(path))
+                BtnArrangeCollage_Click(sender, e);
+        }
+
+        // Loads the arrangement stored in a collage PDF or layout file and
+        // makes it the current one. Returns false when nothing was imported.
+        private bool ImportCollageLayout(string path)
+        {
+            CollageLayout layout;
+
+            try
+            {
+                layout = CollageLayoutFile.Load(path);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "This file could not be read.\n\n" + ex.Message,
+                    "Import Layout",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return false;
+            }
+
+            if (layout == null)
+            {
+                MessageBox.Show(
+                    "No collage layout was found in this file.\n\n" +
+                    "A layout can be imported from a PDF created by the Image " +
+                    "Collage Builder in this version or later, or from a layout " +
+                    "file saved in the Arrange Images workspace.\n\n" +
+                    "PDFs made with an earlier version do not contain one.",
+                    "Import Layout",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return false;
+            }
+
+            if (!LocateMissingCollageImages(layout))
+                return false;
+
+            if (layout.Images.Count == 0)
+            {
+                MessageBox.Show(
+                    "None of the images used by this layout could be found.",
+                    "Import Layout",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // The source, grid and page settings follow the layout.
+            selectedCollageFiles = layout.Images.ToArray();
+            selectedCollageFolder = "";
+            txtCollageSource.Text =
+                layout.Images.Count + " image(s) from " + Path.GetFileName(path);
+
+            cmbCollageOutputType.SelectedIndex = 0;
+            ApplyCollagePageSetup(layout.Page);
+
+            manualCollageSlots = new List<string>(layout.Slots);
+
+            manualCollageCaptions =
+                new Dictionary<string, string>(
+                    layout.Remarks,
+                    StringComparer.OrdinalIgnoreCase);
+
+            manualCollageCustomNames =
+                new Dictionary<string, string>(
+                    layout.Remarks,
+                    StringComparer.OrdinalIgnoreCase);
+
+            manualCollageNotes =
+                new Dictionary<string, string>(
+                    layout.Notes,
+                    StringComparer.OrdinalIgnoreCase);
+
+            manualCollageDisplayMode =
+                string.IsNullOrWhiteSpace(layout.DisplayMode)
+                    ? "Both"
+                    : layout.DisplayMode;
+
+            chkCollageShowFilename.Checked =
+                !string.Equals(
+                    manualCollageDisplayMode,
+                    "None",
+                    StringComparison.OrdinalIgnoreCase);
+
+            // Revised PDFs go next to the original unless a folder is
+            // already chosen.
+            string currentOutput = txtCollageOutput.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(currentOutput) ||
+                currentOutput.StartsWith("Select", StringComparison.OrdinalIgnoreCase))
+            {
+                txtCollageOutput.Text = Path.GetDirectoryName(path);
+            }
+
+            UpdateCollageArrangementButtons();
+
+            rtbFormatConsole.AppendText(
+                "[COLLAGE] Imported layout from " +
+                Path.GetFileName(path) +
+                ": " +
+                layout.Images.Count +
+                " image(s), " +
+                layout.Page.Columns + " x " + layout.Page.Rows +
+                " grid." +
+                Environment.NewLine);
+
+            return true;
+        }
+
+        // Images are referenced by the layout, not stored in it. When some
+        // are no longer where they were, the user can point to the folder
+        // that holds them now. Returns false when the import is cancelled.
+        private bool LocateMissingCollageImages(CollageLayout layout)
+        {
+            while (layout.MissingImages.Count > 0)
+            {
+                string examples =
+                    string.Join(
+                        Environment.NewLine,
+                        layout.MissingImages
+                            .Take(3)
+                            .Select(p => "   " + p));
+
+                DialogResult answer =
+                    MessageBox.Show(
+                        layout.MissingImages.Count +
+                        " of the " +
+                        layout.Images.Count +
+                        " image(s) in this layout are not where they were saved, for example:\n\n" +
+                        examples +
+                        "\n\n" +
+                        "Yes  -  choose the folder that contains them now\n" +
+                        "No  -  continue without these images\n" +
+                        "Cancel  -  stop the import",
+                        "Images Not Found",
+                        MessageBoxButtons.YesNoCancel,
+                        MessageBoxIcon.Warning);
+
+                if (answer == DialogResult.Cancel)
+                    return false;
+
+                if (answer == DialogResult.No)
+                    break;
+
+                string folder = SelectFolderModern("Collage.RelinkFolder");
+
+                if (string.IsNullOrWhiteSpace(folder))
+                    continue;
+
+                if (CollageLayoutFile.Relink(layout, folder) == 0)
+                {
+                    MessageBox.Show(
+                        "None of the missing images were found in that folder.",
+                        "Images Not Found",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+            }
+
+            CollageLayoutFile.DropMissing(layout);
+            return true;
+        }
+
+        // The arrangement is still usable as long as every image it places
+        // is still part of the source. Source images that it does not place
+        // are simply unplaced; the caller warns about those separately.
         private static bool ManualArrangementMatchesSource(
             IList<string> sourceFiles,
             IList<string> slots)
@@ -219,7 +530,7 @@ namespace NPPLPrintMaster
                         p => !string.IsNullOrWhiteSpace(p)),
                     StringComparer.OrdinalIgnoreCase);
 
-            return source.SetEquals(arranged);
+            return arranged.IsSubsetOf(source);
         }
 
         private async void BtnGenerateCollage_Click(object sender, EventArgs e)
@@ -305,13 +616,15 @@ namespace NPPLPrintMaster
                 return;
             }
 
-            int gridSize = cmbCollageGrid.SelectedIndex + 1;
             string outputType = cmbCollageOutputType.SelectedItem.ToString();
-            bool landscape =
-                string.Equals(
-                    cmbCollageOrientation.SelectedItem.ToString(),
-                    "Landscape",
-                    StringComparison.OrdinalIgnoreCase);
+            CollagePageSetup pageSetup = GetCollagePageSetup();
+
+            // A manual arrangement applies to PDF output only.
+            bool manualArrangement =
+                manualCollageSlots != null &&
+                outputType.Equals("PDF", StringComparison.OrdinalIgnoreCase);
+
+            string textMode = GetCollageTextMode(manualArrangement);
 
             Directory.CreateDirectory(outputFolder);
 
@@ -374,9 +687,9 @@ namespace NPPLPrintMaster
             rtbFormatConsole.AppendText(
                 "[COLLAGE] Preparing " + filesToProcess.Count + " image(s)...\n");
             rtbFormatConsole.AppendText(
-                "[COLLAGE] Grid: " + gridSize + " x " + gridSize +
+                "[COLLAGE] Grid: " + pageSetup.Columns + " x " + pageSetup.Rows +
                 " | Output: " + outputType +
-                " | Orientation: " + (landscape ? "Landscape" : "Portrait") + "\n");
+                " | Orientation: " + (pageSetup.Landscape ? "Landscape" : "Portrait") + "\n");
             rtbFormatConsole.AppendText(
                 "--------------------------------------------------\n");
 
@@ -394,33 +707,13 @@ namespace NPPLPrintMaster
                             filesToProcess,
                             outputPath,
                             outputType,
-                            gridSize,
-                            landscape,
-                            chkCollageShowFilename.Checked,
-                            chkCollageBorders.Checked,
+                            pageSetup,
                             progress,
-                            outputType.Equals(
-                                "PDF",
-                                StringComparison.OrdinalIgnoreCase)
-                                ? manualCollageSlots
-                                : null,
-                            outputType.Equals(
-                                "PDF",
-                                StringComparison.OrdinalIgnoreCase)
-                                ? manualCollageCaptions
-                                : null,
-                            outputType.Equals(
-                                "PDF",
-                                StringComparison.OrdinalIgnoreCase)
-                                ? manualCollageCustomNames
-                                : null,
-                            outputType.Equals(
-                                "PDF",
-                                StringComparison.OrdinalIgnoreCase)
-                                ? (string.IsNullOrWhiteSpace(manualCollageDisplayMode)
-                                    ? "Both"
-                                    : manualCollageDisplayMode)
-                                : "Filename"));
+                            manualArrangement ? manualCollageSlots : null,
+                            manualArrangement ? manualCollageCaptions : null,
+                            manualArrangement ? manualCollageCustomNames : null,
+                            textMode,
+                            manualArrangement ? manualCollageNotes : null));
 
                 rtbFormatConsole.AppendText(
                     "--------------------------------------------------\n");
@@ -475,18 +768,7 @@ namespace NPPLPrintMaster
 
         private static bool IsSupportedCollageImage(string path)
         {
-            if (string.IsNullOrWhiteSpace(path))
-                return false;
-
-            string extension =
-                Path.GetExtension(path).ToLowerInvariant();
-
-            return extension == ".png" ||
-                   extension == ".jpg" ||
-                   extension == ".jpeg" ||
-                   extension == ".bmp" ||
-                   extension == ".tif" ||
-                   extension == ".tiff";
+            return ImageCollageEngine.IsSupportedImageFile(path);
         }
 
     }

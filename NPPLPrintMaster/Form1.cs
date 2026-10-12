@@ -317,16 +317,20 @@ namespace NPPLPrintMaster
 
         // Image Collage Builder
         private TextBox txtCollageSource, txtCollageOutput, txtCollageFileName;
-        private ComboBox cmbCollageOutputType, cmbCollageGrid, cmbCollageOrientation;
+        private ComboBox cmbCollageOutputType, cmbCollageColumns, cmbCollageRows, cmbCollageOrientation, cmbCollageTextSize;
+        private TextBox txtCollageHeader;
+        private CheckBox chkCollageDate, chkCollagePageNumbers;
         private CheckBox chkCollageSubDirs, chkCollageShowFilename, chkCollageBorders, chkCollageAutoFileName;
         private Button btnGenerateCollage;
         private Button btnArrangeCollage;
         private Button btnClearCollageArrangement;
+        private Button btnImportCollageLayout;
         private string[] selectedCollageFiles = null;
         private string selectedCollageFolder = "";
         private List<string> manualCollageSlots = null;
         private Dictionary<string, string> manualCollageCaptions = null;
         private Dictionary<string, string> manualCollageCustomNames = null;
+        private Dictionary<string, string> manualCollageNotes = null;
         private string manualCollageDisplayMode = "Both";
 
         private FlowLayoutPanel pnlProducts, pnlCartons, pnlOthers;
@@ -907,7 +911,7 @@ namespace NPPLPrintMaster
                 Text = "Image Collage Builder",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
                 Location = new Point(0, 505),
-                Size = new Size(850, 400)
+                Size = new Size(850, 418)
             };
 
             // --------------------------------------------------------
@@ -950,10 +954,7 @@ namespace NPPLPrintMaster
                     {
                         selectedCollageFiles = ofd.FileNames;
                         selectedCollageFolder = "";
-                        manualCollageSlots = null;
-                        manualCollageCaptions = null;
-                manualCollageCustomNames = null;
-                        UpdateCollageArrangementButtons();
+                        ResetManualCollageArrangement();
                         txtCollageSource.Text = selectedCollageFiles.Length + " image(s) selected";
                     }
                 }
@@ -973,10 +974,7 @@ namespace NPPLPrintMaster
                 {
                     selectedCollageFolder = folder;
                     selectedCollageFiles = null;
-                    manualCollageSlots = null;
-                    manualCollageCaptions = null;
-                manualCollageCustomNames = null;
-                    UpdateCollageArrangementButtons();
+                    ResetManualCollageArrangement();
                     txtCollageSource.Text = folder;
                 }
             };
@@ -991,10 +989,7 @@ namespace NPPLPrintMaster
 
             chkCollageSubDirs.CheckedChanged += (s, e) =>
             {
-                manualCollageSlots = null;
-                manualCollageCaptions = null;
-                manualCollageCustomNames = null;
-                UpdateCollageArrangementButtons();
+                ResetManualCollageArrangement();
             };
 
             // --------------------------------------------------------
@@ -1099,27 +1094,46 @@ namespace NPPLPrintMaster
 
             Label lblCollageGrid = new Label
             {
-                Text = "Grid Layout",
+                Text = "Grid  (columns x rows)",
                 Location = new Point(190, 161),
                 AutoSize = true,
                 Font = new Font("Segoe UI", 9)
             };
 
-            cmbCollageGrid = new ComboBox
+            // Columns and rows are chosen separately, so a page can be
+            // 2 x 3, 3 x 4 and so on. Changing the grid keeps a manual
+            // arrangement: the images stay in order and flow into the new
+            // grid.
+            cmbCollageColumns = new ComboBox
             {
                 Location = new Point(190, 182),
-                Size = new Size(150, 28),
+                Size = new Size(66, 28),
                 DropDownStyle = ComboBoxStyle.DropDownList
             };
-            cmbCollageGrid.Items.AddRange(new object[] { "1 x 1", "2 x 2", "3 x 3", "4 x 4" });
-            cmbCollageGrid.SelectedIndex = 1;
-            cmbCollageGrid.SelectedIndexChanged += (s, e) =>
+
+            Label lblCollageGridBy = new Label
             {
-                manualCollageSlots = null;
-                manualCollageCaptions = null;
-                manualCollageCustomNames = null;
-                UpdateCollageArrangementButtons();
+                Text = "x",
+                Location = new Point(260, 185),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9)
             };
+
+            cmbCollageRows = new ComboBox
+            {
+                Location = new Point(274, 182),
+                Size = new Size(66, 28),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+
+            for (int i = 1; i <= CollagePageSetup.MaxColumns; i++)
+                cmbCollageColumns.Items.Add(i.ToString());
+
+            for (int i = 1; i <= CollagePageSetup.MaxRows; i++)
+                cmbCollageRows.Items.Add(i.ToString());
+
+            cmbCollageColumns.SelectedIndex = 1;
+            cmbCollageRows.SelectedIndex = 1;
 
             Label lblCollageOrientation = new Label
             {
@@ -1155,25 +1169,79 @@ namespace NPPLPrintMaster
                 Location = new Point(20, 252),
                 AutoSize = true,
                 Font = new Font("Segoe UI", 9),
-                Checked = false
+                Checked = true
             };
 
             chkCollageBorders = new CheckBox
             {
                 Text = "Draw grid cell borders",
-                Location = new Point(245, 252),
+                Location = new Point(260, 252),
                 AutoSize = true,
                 Font = new Font("Segoe UI", 9),
                 Checked = false
+            };
+
+            Label lblCollageTextSize = new Label
+            {
+                Text = "Text size",
+                Location = new Point(412, 254),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9)
+            };
+
+            cmbCollageTextSize = new ComboBox
+            {
+                Location = new Point(468, 250),
+                Size = new Size(64, 28),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+
+            foreach (int size in CollagePageSetup.CaptionFontChoices)
+                cmbCollageTextSize.Items.Add(size + " pt");
+
+            cmbCollageTextSize.SelectedIndex =
+                CollagePageSetup.NearestCaptionFontChoice(
+                    CollagePageSetup.DefaultCaptionFontPoints);
+
+            // Page header and footer.
+            Label lblCollageHeader = new Label
+            {
+                Text = "Page header",
+                Location = new Point(20, 286),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9)
+            };
+
+            txtCollageHeader = new TextBox
+            {
+                Location = new Point(102, 283),
+                Size = new Size(236, 25),
+                Font = new Font("Segoe UI", 9)
+            };
+
+            chkCollageDate = new CheckBox
+            {
+                Text = "Date",
+                Location = new Point(350, 284),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9)
+            };
+
+            chkCollagePageNumbers = new CheckBox
+            {
+                Text = "Page numbers",
+                Location = new Point(410, 284),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9)
             };
 
             Label lblCollageHint = new Label
             {
                 Text =
                     "Most common image sizes are placed first for a cleaner collage. " +
-                    "Manual arrangement keeps the selected grid fixed and lets you rearrange images.",
-                Location = new Point(20, 289),
-                Size = new Size(505, 42),
+                    "Arrange Images lets you move images between cells and pages, edit the text and change the grid.",
+                Location = new Point(20, 318),
+                Size = new Size(505, 34),
                 Font = new Font("Segoe UI", 8)
             };
 
@@ -1199,11 +1267,19 @@ namespace NPPLPrintMaster
             btnClearCollageArrangement.FlatAppearance.BorderSize = 0;
             btnClearCollageArrangement.Click += (s, e) =>
             {
-                manualCollageSlots = null;
-                manualCollageCaptions = null;
-                manualCollageCustomNames = null;
-                UpdateCollageArrangementButtons();
+                ResetManualCollageArrangement();
             };
+
+            btnImportCollageLayout = new Button
+            {
+                Text = "📂  Import Layout / PDF to Edit...",
+                Location = new Point(20, 362),
+                Size = new Size(320, 38),
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat
+            };
+            btnImportCollageLayout.FlatAppearance.BorderSize = 0;
+            btnImportCollageLayout.Click += BtnImportCollageLayout_Click;
 
             btnGenerateCollage = new Button
             {
@@ -1224,12 +1300,16 @@ namespace NPPLPrintMaster
                 chkCollageAutoFileName, lblCollageFileName, txtCollageFileName,
                 lblOutputSettings,
                 lblCollageType, cmbCollageOutputType,
-                lblCollageGrid, cmbCollageGrid,
+                lblCollageGrid, cmbCollageColumns, lblCollageGridBy, cmbCollageRows,
                 lblCollageOrientation, cmbCollageOrientation,
                 lblDisplayOptions,
                 chkCollageShowFilename, chkCollageBorders,
+                lblCollageTextSize, cmbCollageTextSize,
+                lblCollageHeader, txtCollageHeader,
+                chkCollageDate, chkCollagePageNumbers,
                 lblCollageHint,
                 btnArrangeCollage, btnClearCollageArrangement,
+                btnImportCollageLayout,
                 btnGenerateCollage
             });
 

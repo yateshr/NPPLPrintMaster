@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -10,88 +8,127 @@ using System.Windows.Forms;
 namespace NPPLPrintMaster
 {
     /// <summary>
-    /// Photoshop/BarTender-style manual collage workspace.
+    /// Manual arrangement workspace for the Image Collage Builder.
     ///
-    /// The selected grid remains fixed. The white A4 sheet is the real PDF
-    /// page; everything outside it is an infinite pasteboard. Images may be
-    /// dragged between cells and the pasteboard without regenerating a PDF.
+    /// Left:   image library (search, filter, multi-select, drag source).
+    /// Center: the PDF pages exactly as they will print; images are dragged
+    ///         between cells and their names sit centered below them.
+    /// Right:  page strip for jumping to, and dropping onto, any page.
+    ///
+    /// The selected grid stays fixed. Images that are not on a page remain in
+    /// the library as "not placed" and are left out of the PDF.
     /// </summary>
     public sealed class CollageArrangementForm : Form
     {
-        private const string ImagePathFormat = "NPPL.Collage.ImagePath";
+        private enum LibraryFilter
+        {
+            All,
+            Unplaced,
+            Placed
+        }
 
-        private readonly int _gridSize;
-        private readonly bool _landscape;
-        private readonly List<string> _originalOrder;
-        private readonly List<string> _slots;
-        private readonly Dictionary<string, string> _captions =
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, string> _customNames =
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> _unplaced =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, PointF> _pasteboardPositions =
-            new Dictionary<string, PointF>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, Image> _thumbnailCache =
-            new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
+        private const int MaxUndoSteps = 100;
 
+        private readonly CollageArrangementModel _model;
+        private readonly CollageThumbnailCache _thumbnails;
         private readonly ThemeColors _theme;
         private readonly string _fontFamily;
 
-        private CollageDesignCanvas _canvas;
-        private FlowLayoutPanel _imageBrowser;
+        // The form's own copy of the page setup. The grid and text size are
+        // changed here, and it is only handed back when the arrangement is
+        // accepted.
+        private readonly CollagePageSetup _page;
+
+        // The collage's images in name order, rebuilt when images are added
+        // or removed.
+        private List<string> _imagesByName = new List<string>();
+        private int _imagesByNameVersion = -1;
+
+        private readonly List<CollageArrangementSnapshot> _undo =
+            new List<CollageArrangementSnapshot>();
+        private readonly List<CollageArrangementSnapshot> _redo =
+            new List<CollageArrangementSnapshot>();
+
+        private readonly List<string> _inspected = new List<string>();
+        private readonly HashSet<string> _inspectedSet =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private CollageLibraryView _library;
+        private CollagePageCanvas _canvas;
+        private CollagePageNavigator _navigator;
+        private ToolTip _toolTip;
+
         private TextBox _searchBox;
-        private ComboBox _imageStatusCombo;
-        private TrackBar _thumbnailSizeTrackBar;
-        private Label _thumbnailSizeLabel;
-        private Label _imageCountLabel;
-        private Label _selectedLabel;
-        private Label _captionLabel;
-        private TextBox _captionBox;
-        private Button _captionApplyButton;
-        private Label _pageLabel;
+        private Button[] _filterButtons;
+        private Button[] _sizeButtons;
+        private Label _summaryLabel;
+        private Label _inspectorName;
+        private Label _inspectorLocation;
+        private TextBox _remarkBox;
+        private TextBox _noteBox;
+        private Button _remarkResetButton;
+        private Button _placeButton;
+        private Button _removeButton;
         private ComboBox _pageCombo;
+        private ComboBox _dropModeCombo;
         private ComboBox _displayModeCombo;
-        private Label _statusLabel;
+        private ComboBox _textSizeCombo;
+        private ComboBox _columnsCombo;
+        private ComboBox _rowsCombo;
+        private Label _subtitleLabel;
+        private Button _previousPageButton;
+        private Button _nextPageButton;
         private Button _undoButton;
         private Button _redoButton;
+        private Label _zoomLabel;
+        private Label _statusLabel;
+        private ContextMenuStrip _arrangeMenu;
 
-        private readonly Stack<ArrangementSnapshot> _undo =
-            new Stack<ArrangementSnapshot>();
-        private readonly Stack<ArrangementSnapshot> _redo =
-            new Stack<ArrangementSnapshot>();
+        private LibraryFilter _filter = LibraryFilter.All;
 
-        private string _selectedImagePath;
-        private int _currentPage;
-        private int _totalPages;
+        // What the two text boxes of the inspector are editing: the images,
+        // and a key that changes whenever that selection changes.
+        private readonly List<string> _editTargets = new List<string>();
+        private string _remarkBoxKey;
+        private bool _updatingGrid;
+        private bool _updatingRemark;
+        private bool _remarkUndoPushed;
+        private bool _updatingPageCombo;
+        private bool _dirty;
+        private bool _accepted;
 
         public IList<string> ResultSlots { get; private set; }
         public IDictionary<string, string> ResultCaptions { get; private set; }
         public IDictionary<string, string> ResultCustomNames { get; private set; }
-        public string ResultDisplayMode { get; private set; } = "Both";
+        public IDictionary<string, string> ResultNotes { get; private set; }
+        public string ResultDisplayMode { get; private set; }
+
+        // Every image in the collage when it was accepted. Differs from the
+        // images passed in when some were added or removed in the workspace.
+        public IList<string> ResultImages { get; private set; }
+
+        // The page setup as it was left: the grid and the text size can be
+        // changed in the workspace.
+        public CollagePageSetup ResultPage { get; private set; }
 
         public CollageArrangementForm(
             IList<string> orderedImagePaths,
-            int gridSize,
-            bool landscape,
+            CollagePageSetup page,
             AppSettings appSettings,
             IList<string> initialSlots = null,
             IDictionary<string, string> initialCaptions = null,
-            IDictionary<string, string> initialCustomNames = null)
+            IDictionary<string, string> initialCustomNames = null,
+            string initialDisplayMode = null,
+            IDictionary<string, string> initialNotes = null)
         {
             if (orderedImagePaths == null)
                 throw new ArgumentNullException("orderedImagePaths");
 
-            if (gridSize < 1 || gridSize > 4)
-                throw new ArgumentOutOfRangeException("gridSize");
+            if (page == null)
+                throw new ArgumentNullException("page");
 
-            _gridSize = gridSize;
-            _landscape = landscape;
-
-            _originalOrder = orderedImagePaths
-                .Where(File.Exists)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            _page = page.Clone();
+            _page.Normalize();
 
             string themeName =
                 appSettings == null
@@ -115,203 +152,181 @@ namespace NPPLPrintMaster
                     ? "Tahoma"
                     : "Segoe UI";
 
-            _slots = BuildInitialSlots(initialSlots);
+            List<string> images =
+                orderedImagePaths
+                    .Where(File.Exists)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
-            if (initialCaptions != null)
-            {
-                foreach (KeyValuePair<string, string> pair in initialCaptions)
-                {
-                    if (!string.IsNullOrWhiteSpace(pair.Key) &&
-                        _originalOrder.Any(
-                            p => string.Equals(
-                                p,
-                                pair.Key,
-                                StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _captions[pair.Key] = pair.Value ?? string.Empty;
-                    }
-                }
-            }
+            _model =
+                new CollageArrangementModel(
+                    images,
+                    _page,
+                    initialSlots,
+                    initialCaptions,
+                    initialCustomNames,
+                    initialNotes);
 
-            if (initialCustomNames != null)
-            {
-                foreach (KeyValuePair<string, string> pair in initialCustomNames)
-                {
-                    if (!string.IsNullOrWhiteSpace(pair.Key) &&
-                        _originalOrder.Any(
-                            p => string.Equals(
-                                p,
-                                pair.Key,
-                                StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _customNames[pair.Key] = pair.Value ?? string.Empty;
-                    }
-                }
-            }
+            _thumbnails =
+                new CollageThumbnailCache(
+                    CollageThumbnailCache.ChooseMaxEdge(images.Count));
 
-            // Every image gets an editable custom remark initialized from its
-            // original filename. Existing saved remarks/custom names are preserved.
-            foreach (string path in _originalOrder)
-            {
-                string existingRemark;
-                _captions.TryGetValue(path, out existingRemark);
-
-                string existingCustomName;
-                _customNames.TryGetValue(path, out existingCustomName);
-
-                if (string.IsNullOrWhiteSpace(existingRemark))
-                {
-                    _captions[path] =
-                        string.IsNullOrWhiteSpace(existingCustomName)
-                            ? Path.GetFileNameWithoutExtension(path)
-                            : existingCustomName;
-                }
-            }
-
-            int slotsPerPage = _gridSize * _gridSize;
-
-            _totalPages = Math.Max(
-                1,
-                (int)Math.Ceiling(
-                    _slots.Count / (double)slotsPerPage));
-
-            while (_slots.Count < _totalPages * slotsPerPage)
-                _slots.Add(null);
-
-            RebuildUnplacedSet();
-            InitializePasteboardPositions();
+            ResultDisplayMode = NormalizeDisplayMode(initialDisplayMode);
 
             BuildInterface();
+
+            _model.Changed += (s, e) => RefreshAll();
+            _thumbnails.ThumbnailsReady += Thumbnails_Ready;
+
             RefreshAll();
+
+            // Everything is loaded in the background, first pages first.
+            _thumbnails.Preload(_model.Images);
         }
 
-        private List<string> BuildInitialSlots(IList<string> initialSlots)
+        private static string NormalizeDisplayMode(string mode)
         {
-            List<string> result =
-                initialSlots == null
-                    ? new List<string>(_originalOrder)
-                    : new List<string>(initialSlots);
-
-            HashSet<string> valid =
-                new HashSet<string>(
-                    _originalOrder,
-                    StringComparer.OrdinalIgnoreCase);
-
-            for (int i = 0; i < result.Count; i++)
+            foreach (string known in new[]
             {
-                if (string.IsNullOrWhiteSpace(result[i]) ||
-                    !valid.Contains(result[i]))
-                {
-                    result[i] = null;
-                }
+                CollageCellLayout.ModeFilename,
+                CollageCellLayout.ModeBoth,
+                CollageCellLayout.ModeRemark,
+                CollageCellLayout.ModeNone
+            })
+            {
+                if (string.Equals(known, mode, StringComparison.OrdinalIgnoreCase))
+                    return known;
             }
 
-            foreach (string path in _originalOrder)
-            {
-                bool alreadyAssigned =
-                    result.Any(
-                        p => string.Equals(
-                            p,
-                            path,
-                            StringComparison.OrdinalIgnoreCase));
-
-                if (!alreadyAssigned)
-                {
-                    int emptyIndex =
-                        result.FindIndex(
-                            p => string.IsNullOrWhiteSpace(p));
-
-                    if (emptyIndex >= 0)
-                        result[emptyIndex] = path;
-                    else
-                        result.Add(path);
-                }
-            }
-
-            return result;
+            return CollageCellLayout.ModeBoth;
         }
 
+        // ------------------------------------------------------------
+        // Interface
+        // ------------------------------------------------------------
         private void BuildInterface()
         {
             Text =
-                "NPPL PrintMaster  •  Image Collage Builder  •  Design Workspace";
+                "NPPL PrintMaster  •  Image Collage Builder  •  Arrange Images";
             StartPosition = FormStartPosition.CenterParent;
-            MinimumSize = new Size(1200, 760);
-            Size = new Size(
-                _landscape ? 1500 : 1360,
-                900);
+            MinimumSize = new Size(1000, 640);
+            Size = new Size(1320, 840);
+            WindowState = FormWindowState.Maximized;
             BackColor = _theme.BgLight;
             ForeColor = _theme.TextColor;
             Font = new Font(_fontFamily, 9f);
-            KeyPreview = true;
 
-            Panel header = new Panel
+            _toolTip = new ToolTip();
+
+            Panel left = CreateLibraryPanel();
+            left.Dock = DockStyle.Left;
+            left.Width = 318;
+
+            Splitter splitter = new Splitter
             {
-                Dock = DockStyle.Top,
-                Height = 70,
-                BackColor = _theme.ContentBg,
-                Padding = new Padding(18, 9, 18, 8)
-            };
-
-            Label title = new Label
-            {
-                Text = "Image Collage Builder",
-                Font = new Font(_fontFamily, 16f, FontStyle.Bold),
-                ForeColor = _theme.TextColor,
-                AutoSize = true,
-                Location = new Point(18, 10)
-            };
-
-            Label subtitle = new Label
-            {
-                Text =
-                    "Design Workspace  •  drag images around the infinite pasteboard  •  " +
-                    "white page = PDF",
-                Font = new Font(_fontFamily, 8.5f, FontStyle.Regular),
-                ForeColor = _theme.MutedTextColor,
-                AutoSize = true,
-                Location = new Point(20, 39)
-            };
-
-            header.Controls.Add(subtitle);
-            header.Controls.Add(title);
-
-            Panel footer = CreateFooter();
-
-            SplitContainer split = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                Orientation = Orientation.Vertical,
-                SplitterWidth = 5,
-                SplitterDistance = 285,
-                Panel1MinSize = 220,
-                Panel2MinSize = 0,
+                Dock = DockStyle.Left,
+                Width = 5,
+                MinSize = 240,
+                MinExtra = 430,
                 BackColor = _theme.BorderColor
             };
 
-            split.Panel1.BackColor = _theme.ContentBg;
-            split.Panel2.BackColor = _theme.BgLight;
+            Panel right = CreateNavigatorPanel();
+            right.Dock = DockStyle.Right;
+            right.Width = _page.Landscape ? 204 : 178;
 
-            split.Panel1.Controls.Add(CreateImageLibrary());
+            Panel center = CreateEditorPanel();
+            center.Dock = DockStyle.Fill;
 
-            Panel editor = CreateEditorPanel();
-            split.Panel2.Controls.Add(editor);
+            // Docking runs from the last control added to the first.
+            Controls.Add(center);
+            Controls.Add(splitter);
+            Controls.Add(left);
+            Controls.Add(right);
+            Controls.Add(CreateFooter());
+            Controls.Add(CreateHeader());
 
-            Controls.Add(split);
-            Controls.Add(footer);
-            Controls.Add(header);
-
-            Shown += (s, e) => _canvas.FitPage();
-            KeyDown += CollageArrangementForm_KeyDown;
+            Shown +=
+                (s, e) =>
+                {
+                    _canvas.FitPage();
+                    _canvas.Focus();
+                };
         }
 
-        private Panel CreateImageLibrary()
+        private Panel CreateHeader()
         {
-            Panel left = new Panel
+            Panel header = new Panel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
+                Height = 58,
+                BackColor = _theme.ContentBg
+            };
+
+            Label title = CreateLabel(
+                "Image Collage Builder",
+                14f,
+                FontStyle.Bold,
+                _theme.TextColor);
+            title.AutoSize = true;
+            title.Location = new Point(14, 6);
+
+            _subtitleLabel = CreateLabel(
+                DescribePage(),
+                8.5f,
+                FontStyle.Regular,
+                _theme.MutedTextColor);
+            _subtitleLabel.AutoSize = true;
+            _subtitleLabel.Location = new Point(16, 34);
+
+            _summaryLabel = CreateLabel(
+                string.Empty,
+                9f,
+                FontStyle.Bold,
+                _theme.TextColor);
+            _summaryLabel.Dock = DockStyle.Right;
+            _summaryLabel.Width = 470;
+            _summaryLabel.Padding = new Padding(0, 0, 16, 0);
+            _summaryLabel.TextAlign = ContentAlignment.MiddleRight;
+
+            Panel line = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 1,
+                BackColor = _theme.BorderColor
+            };
+
+            header.Controls.Add(_subtitleLabel);
+            header.Controls.Add(title);
+            header.Controls.Add(_summaryLabel);
+            header.Controls.Add(line);
+
+            return header;
+        }
+
+        private string DescribePage()
+        {
+            return "Arrange images on the PDF pages  •  " +
+                   _page.Columns + " × " + _page.Rows + " grid  •  A4 " +
+                   (_page.Landscape ? "Landscape" : "Portrait") + "  •  " +
+                   _page.CellsPerPage +
+                   (_page.CellsPerPage == 1 ? " image" : " images") +
+                   " per page";
+        }
+
+        private Panel CreateLibraryPanel()
+        {
+            Panel panel = new Panel
+            {
                 BackColor = _theme.ContentBg,
-                Padding = new Padding(8)
+                Padding = new Padding(10, 8, 8, 8)
+            };
+
+            // Heading with the thumbnail size switch.
+            Panel headingRow = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 30
             };
 
             Label heading = CreateLabel(
@@ -319,87 +334,276 @@ namespace NPPLPrintMaster
                 9f,
                 FontStyle.Bold,
                 _theme.TextColor);
-            heading.Dock = DockStyle.Top;
-            heading.Height = 26;
+            heading.Dock = DockStyle.Fill;
+            heading.TextAlign = ContentAlignment.MiddleLeft;
 
-            _imageCountLabel = CreateLabel(
-                "",
-                8f,
+            FlowLayoutPanel sizePanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Right,
+                Width = 152,
+                WrapContents = false,
+                FlowDirection = FlowDirection.LeftToRight
+            };
+
+            Button addButton = CreateButton("+ Add…", 60, false);
+            addButton.Height = 24;
+            addButton.Margin = new Padding(0, 2, 8, 0);
+            addButton.Click += (s, e) => AddImagesFromDialog();
+            _toolTip.SetToolTip(
+                addButton,
+                "Add more images to this collage.\n" +
+                "Image files can also be dragged in from a folder window.");
+            sizePanel.Controls.Add(addButton);
+
+            string[] sizeNames = { "S", "M", "L" };
+            string[] sizeTips =
+            {
+                "Small thumbnails",
+                "Medium thumbnails",
+                "Large thumbnails"
+            };
+
+            _sizeButtons = new Button[3];
+
+            for (int i = 0; i < 3; i++)
+            {
+                int level = i + 1;
+
+                Button button = CreateButton(sizeNames[i], 26, false);
+                button.Height = 24;
+                button.Margin = new Padding(0, 2, 2, 0);
+                button.Click += (s, e) => SetLibrarySize(level);
+                _toolTip.SetToolTip(button, sizeTips[i]);
+
+                _sizeButtons[i] = button;
+                sizePanel.Controls.Add(button);
+            }
+
+            headingRow.Controls.Add(heading);
+            headingRow.Controls.Add(sizePanel);
+
+            // Search.
+            Panel searchRow = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 30
+            };
+
+            Label searchLabel = CreateLabel(
+                "Search",
+                8.5f,
                 FontStyle.Regular,
                 _theme.MutedTextColor);
-            _imageCountLabel.Dock = DockStyle.Top;
-            _imageCountLabel.Height = 22;
+            searchLabel.Dock = DockStyle.Left;
+            searchLabel.Width = 50;
+            searchLabel.Padding = new Padding(0, 4, 0, 0);
 
             _searchBox = new TextBox
             {
-                Dock = DockStyle.Top,
-                Height = 29,
+                Dock = DockStyle.Fill,
                 BackColor = _theme.ControlBg,
                 ForeColor = _theme.TextColor,
                 BorderStyle = BorderStyle.FixedSingle
             };
-            _searchBox.TextChanged += (s, e) => RefreshImageBrowser();
+            _searchBox.TextChanged += (s, e) => RefreshLibrary();
+            CollageWorkspaceUi.SetCueBanner(
+                _searchBox,
+                "Name or remark  (Ctrl+F)");
 
-            _imageStatusCombo = new ComboBox
+            searchRow.Controls.Add(_searchBox);
+            searchRow.Controls.Add(searchLabel);
+
+            // All / Not placed / Placed.
+            TableLayoutPanel filterRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 34,
+                ColumnCount = 3,
+                RowCount = 1
+            };
+
+            filterRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            _filterButtons = new Button[3];
+
+            for (int i = 0; i < 3; i++)
+            {
+                LibraryFilter filter = (LibraryFilter)i;
+
+                filterRow.ColumnStyles.Add(
+                    new ColumnStyle(SizeType.Percent, 33.33f));
+
+                Button button = CreateButton(string.Empty, 60, false);
+                button.Dock = DockStyle.Fill;
+                button.Margin = new Padding(0, 0, i == 2 ? 0 : 4, 6);
+                button.Click += (s, e) => SetFilter(filter);
+
+                _filterButtons[i] = button;
+                filterRow.Controls.Add(button, i, 0);
+            }
+
+            _library =
+                new CollageLibraryView(
+                    _model,
+                    _thumbnails,
+                    _theme,
+                    _fontFamily);
+            _library.Dock = DockStyle.Fill;
+            _library.ContextMenuStrip = CreateLibraryMenu();
+            _library.SelectionChanged += Library_SelectionChanged;
+            _library.ItemActivated += ActivateLibraryItem;
+            _library.RemoveRequested += UnplaceImages;
+            _library.ImagesReturned += UnplaceImages;
+            _library.FilesDropped += files => AddImages(files, -1, false);
+
+            panel.Controls.Add(_library);
+            panel.Controls.Add(CreateInspector());
+            panel.Controls.Add(filterRow);
+            panel.Controls.Add(searchRow);
+            panel.Controls.Add(headingRow);
+
+            return panel;
+        }
+
+        private Panel CreateInspector()
+        {
+            Panel inspector = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 180,
+                BackColor = _theme.ContentBg,
+                Padding = new Padding(0, 8, 0, 0)
+            };
+
+            Label heading = CreateLabel(
+                "SELECTED IMAGE",
+                8f,
+                FontStyle.Bold,
+                _theme.MutedTextColor);
+            heading.Dock = DockStyle.Top;
+            heading.Height = 20;
+
+            _inspectorName = CreateLabel(
+                string.Empty,
+                9f,
+                FontStyle.Bold,
+                _theme.TextColor);
+            _inspectorName.Dock = DockStyle.Top;
+            _inspectorName.Height = 20;
+
+            _inspectorLocation = CreateLabel(
+                string.Empty,
+                8.25f,
+                FontStyle.Regular,
+                _theme.MutedTextColor);
+            _inspectorLocation.Dock = DockStyle.Top;
+            _inspectorLocation.Height = 20;
+
+            // The two editable lines printed under the image.
+            Panel remarkRow = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 30,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = _theme.ControlBg,
-                ForeColor = _theme.TextColor,
-                FlatStyle = FlatStyle.Flat
+                Padding = new Padding(0, 3, 0, 0)
             };
-            _imageStatusCombo.Items.AddRange(
-                new object[] { "Unplaced", "Placed", "All" });
-            _imageStatusCombo.SelectedIndex = 0;
-            _imageStatusCombo.SelectedIndexChanged +=
-                (s, e) => RefreshImageBrowser();
 
-            Panel thumbOptions = new Panel
+            _remarkBox = CreateInspectorTextBox();
+            _remarkBox.TextChanged += RemarkBox_TextChanged;
+            _toolTip.SetToolTip(
+                _remarkBox,
+                "Remark printed under the file name.\n" +
+                "It starts as the file name and can be changed.");
+
+            _remarkResetButton = CreateButton("↺", 30, false);
+            _remarkResetButton.Dock = DockStyle.Right;
+            _remarkResetButton.Click += (s, e) => ResetRemark();
+            _toolTip.SetToolTip(
+                _remarkResetButton,
+                "Use the file name again");
+
+            remarkRow.Controls.Add(_remarkBox);
+            remarkRow.Controls.Add(_remarkResetButton);
+            remarkRow.Controls.Add(CreateInspectorRowLabel("Remark"));
+
+            Panel noteRow = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 30,
+                Padding = new Padding(0, 3, 0, 0)
+            };
+
+            _noteBox = CreateInspectorTextBox();
+            _noteBox.TextChanged += NoteBox_TextChanged;
+            _toolTip.SetToolTip(
+                _noteBox,
+                "Additional remark, printed on one more line below the remark.\n" +
+                "Leave it empty for no extra line.");
+
+            noteRow.Controls.Add(_noteBox);
+            noteRow.Controls.Add(CreateInspectorRowLabel("Remark 2"));
+
+            TableLayoutPanel actionRow = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 Height = 38,
-                BackColor = _theme.ContentBg
+                ColumnCount = 2,
+                RowCount = 1,
+                Padding = new Padding(0, 8, 0, 0)
+            };
+            actionRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            actionRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            actionRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            _placeButton = CreateButton("Place on page", 100, true);
+            _placeButton.Dock = DockStyle.Fill;
+            _placeButton.Margin = new Padding(0, 0, 3, 0);
+            _placeButton.Click += (s, e) => PlaceInNextEmpty(_inspected.ToList());
+            _toolTip.SetToolTip(
+                _placeButton,
+                "Put the selected image into the next empty cell " +
+                "(or the empty cell selected on the page)");
+
+            _removeButton = CreateButton("Take off page", 100, false);
+            _removeButton.Dock = DockStyle.Fill;
+            _removeButton.Margin = new Padding(3, 0, 0, 0);
+            _removeButton.Click += (s, e) => UnplaceImages(_inspected.ToList());
+            _toolTip.SetToolTip(
+                _removeButton,
+                "Remove the selected image from its page. " +
+                "It stays in the library as not placed.");
+
+            actionRow.Controls.Add(_placeButton, 0, 0);
+            actionRow.Controls.Add(_removeButton, 1, 0);
+
+            Panel line = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 1,
+                BackColor = _theme.BorderColor
             };
 
-            _thumbnailSizeLabel = CreateLabel(
-                "Thumbnail Large",
-                7.8f,
-                FontStyle.Regular,
-                _theme.MutedTextColor);
-            _thumbnailSizeLabel.Location = new Point(0, 8);
-            _thumbnailSizeLabel.Width = 100;
-
-            _thumbnailSizeTrackBar = new TrackBar
+            Panel spacer = new Panel
             {
-                Minimum = 1,
-                Maximum = 3,
-                Value = 3,
-                TickStyle = TickStyle.None,
-                Width = 135,
-                Height = 30,
-                Location = new Point(95, 1),
-                BackColor = _theme.ContentBg
+                Dock = DockStyle.Top,
+                Height = 8
             };
-            _thumbnailSizeTrackBar.ValueChanged +=
-                (s, e) =>
-                {
-                    _thumbnailSizeLabel.Text =
-                        "Thumbnail " +
-                        (_thumbnailSizeTrackBar.Value == 1
-                            ? "Small"
-                            : _thumbnailSizeTrackBar.Value == 2
-                                ? "Medium"
-                                : "Large");
-                    RefreshImageBrowser();
-                };
 
-            thumbOptions.Controls.Add(_thumbnailSizeTrackBar);
-            thumbOptions.Controls.Add(_thumbnailSizeLabel);
+            inspector.Controls.Add(actionRow);
+            inspector.Controls.Add(noteRow);
+            inspector.Controls.Add(remarkRow);
+            inspector.Controls.Add(_inspectorLocation);
+            inspector.Controls.Add(_inspectorName);
+            inspector.Controls.Add(heading);
+            inspector.Controls.Add(spacer);
+            inspector.Controls.Add(line);
 
-            _captionBox = new TextBox
+            return inspector;
+        }
+
+        private TextBox CreateInspectorTextBox()
+        {
+            TextBox box = new TextBox
             {
-                Multiline = true,
                 Dock = DockStyle.Fill,
                 BackColor = _theme.ControlBg,
                 ForeColor = _theme.TextColor,
@@ -407,258 +611,369 @@ namespace NPPLPrintMaster
                 Enabled = false
             };
 
-            _captionLabel = CreateLabel(
-                "CUSTOM REMARK  •  starts from original filename and is editable",
-                7.8f,
-                FontStyle.Bold,
-                _theme.TextColor);
-            _captionLabel.Dock = DockStyle.Top;
-            _captionLabel.Height = 22;
+            box.Enter += (s, e) => _remarkUndoPushed = false;
+            box.Leave +=
+                (s, e) =>
+                {
+                    CommitBulkText(box);
+                    RefreshInspector();
+                };
+            box.KeyDown +=
+                (s, e) =>
+                {
+                    if (e.KeyCode == Keys.Enter)
+                    {
+                        e.SuppressKeyPress = true;
+                        _canvas.Focus();
+                    }
+                };
 
-            _selectedLabel = CreateLabel(
-                "No image selected",
-                7.7f,
+            return box;
+        }
+
+        private Label CreateInspectorRowLabel(string text)
+        {
+            Label label = CreateLabel(
+                text,
+                8.25f,
                 FontStyle.Regular,
                 _theme.MutedTextColor);
-            _selectedLabel.Dock = DockStyle.Top;
-            _selectedLabel.Height = 46;
-            _selectedLabel.AutoEllipsis = true;
-
-            _captionApplyButton = CreateButton(
-                "Apply Remark",
-                112,
-                _theme.ActiveColor,
-                true);
-            _captionApplyButton.Dock = DockStyle.Bottom;
-            _captionApplyButton.Height = 30;
-            _captionApplyButton.Enabled = false;
-            _captionApplyButton.Click += (s, e) => ApplyCaption();
-
-            Panel selectedPanel = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 175,
-                BackColor = _theme.ControlBg,
-                Padding = new Padding(8)
-            };
-            selectedPanel.Controls.Add(_captionBox);
-            selectedPanel.Controls.Add(_captionLabel);
-            selectedPanel.Controls.Add(_selectedLabel);
-            selectedPanel.Controls.Add(_captionApplyButton);
-
-            FlowLayoutPanel browser = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                WrapContents = true,
-                FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(2),
-                BackColor = _theme.BgLight
-            };
-
-            browser.AllowDrop = true;
-            browser.DragEnter +=
-                (s, e) =>
-                {
-                    if (e.Data.GetDataPresent(ImagePathFormat))
-                        e.Effect = DragDropEffects.Move;
-                    else
-                        e.Effect = DragDropEffects.None;
-                };
-            browser.DragDrop +=
-                (s, e) =>
-                {
-                    string path =
-                        e.Data.GetData(ImagePathFormat) as string;
-                    if (string.IsNullOrWhiteSpace(path))
-                        return;
-
-                    SelectImage(path);
-                };
-
-            _imageBrowser = browser;
-
-            left.Controls.Add(browser);
-            left.Controls.Add(selectedPanel);
-            left.Controls.Add(thumbOptions);
-            left.Controls.Add(_imageStatusCombo);
-            left.Controls.Add(_searchBox);
-            left.Controls.Add(_imageCountLabel);
-            left.Controls.Add(heading);
-
-            return left;
+            label.Dock = DockStyle.Left;
+            label.Width = 62;
+            label.Padding = new Padding(0, 4, 0, 0);
+            return label;
         }
 
         private Panel CreateEditorPanel()
         {
             Panel editor = new Panel
             {
-                Dock = DockStyle.Fill,
                 BackColor = _theme.BgLight
             };
 
-            Panel toolbar = new Panel
+            FlowLayoutPanel toolbar = CreateToolbar();
+
+            _canvas =
+                new CollagePageCanvas(
+                    _model,
+                    _thumbnails,
+                    _theme,
+                    _fontFamily);
+            _canvas.Dock = DockStyle.Fill;
+            _canvas.DisplayMode = ResultDisplayMode;
+            _canvas.ContextMenuStrip = CreateCanvasMenu();
+            _canvas.SelectionChanged += Canvas_SelectionChanged;
+            _canvas.ViewChanged += (s, e) => RefreshView();
+            _canvas.ImagesDropped += DropImages;
+            _canvas.RemoveRequested += path => UnplaceImages(new[] { path });
+            _canvas.TextEdited += ApplyEditedText;
+            _canvas.FilesDropped += AddImages;
+
+            Panel line = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 52,
-                BackColor = _theme.ContentBg,
-                Padding = new Padding(8, 8, 8, 7)
+                Height = 1,
+                BackColor = _theme.BorderColor
             };
-
-            Button fit = CreateButton(
-                "Fit Workspace",
-                105,
-                _theme.ControlBg,
-                false);
-            fit.Location = new Point(8, 8);
-            fit.Click += (s, e) => _canvas.FitPage();
-
-            Button zoomOut = CreateButton(
-                "−",
-                38,
-                _theme.ControlBg,
-                false);
-            zoomOut.Location = new Point(121, 8);
-            zoomOut.Click +=
-                (s, e) => _canvas.ZoomAt(
-                    new Point(
-                        _canvas.ClientSize.Width / 2,
-                        _canvas.ClientSize.Height / 2),
-                    0.82f);
-
-            Button zoomIn = CreateButton(
-                "+",
-                38,
-                _theme.ControlBg,
-                false);
-            zoomIn.Location = new Point(163, 8);
-            zoomIn.Click +=
-                (s, e) => _canvas.ZoomAt(
-                    new Point(
-                        _canvas.ClientSize.Width / 2,
-                        _canvas.ClientSize.Height / 2),
-                    1.22f);
-
-            _undoButton = CreateButton(
-                "↶ Undo",
-                76,
-                _theme.ControlBg,
-                false);
-            _undoButton.Location = new Point(205, 8);
-            _undoButton.Click += (s, e) => Undo();
-
-            _redoButton = CreateButton(
-                "↷ Redo",
-                76,
-                _theme.ControlBg,
-                false);
-            _redoButton.Location = new Point(287, 8);
-            _redoButton.Click += (s, e) => Redo();
-
-            Label displayLabel = CreateLabel(
-                "Text:",
-                8f,
-                FontStyle.Bold,
-                _theme.MutedTextColor);
-            displayLabel.AutoSize = false;
-            displayLabel.Location = new Point(375, 8);
-            displayLabel.Width = 34;
-            displayLabel.Height = 28;
-            displayLabel.TextAlign = ContentAlignment.MiddleRight;
-
-            Label instruction = CreateLabel(
-                "Continuous PDF design space  •  Wheel = zoom  •  middle mouse / Space+drag = pan  •  drag images across pages",
-                8f,
-                FontStyle.Regular,
-                _theme.MutedTextColor);
-            instruction.AutoSize = false;
-            instruction.Location = new Point(625, 7);
-            instruction.Height = 34;
-            instruction.Width = 650;
-            instruction.TextAlign = ContentAlignment.MiddleLeft;
-
-            _statusLabel = CreateLabel(
-                "",
-                8f,
-                FontStyle.Bold,
-                _theme.MutedTextColor);
-            _statusLabel.Dock = DockStyle.Right;
-            _statusLabel.Width = 230;
-            _statusLabel.TextAlign = ContentAlignment.MiddleRight;
-
-            _displayModeCombo = new ComboBox
-            {
-                Width = 205,
-                Height = 28,
-                Location = new Point(414, 8),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = _theme.ControlBg,
-                ForeColor = _theme.TextColor,
-                FlatStyle = FlatStyle.Flat
-            };
-            _displayModeCombo.Items.AddRange(
-                new object[]
-                {
-                    "Filename only",
-                    "Filename + Custom Remark",
-                    "Custom Remark only"
-                });
-            _displayModeCombo.SelectedIndex = 1;
-            _displayModeCombo.SelectedIndexChanged +=
-                (sender, args) =>
-                {
-                    string selected =
-                        _displayModeCombo.SelectedItem == null
-                            ? "Filename + Custom Remark"
-                            : _displayModeCombo.SelectedItem.ToString();
-
-                    ResultDisplayMode =
-                        selected == "Filename only"
-                            ? "Filename"
-                            : selected == "Custom Remark only"
-                                ? "Remark"
-                                : "Both";
-
-                    if (_canvas != null)
-                        _canvas.SetDisplayMode(ResultDisplayMode);
-                };
-
-            toolbar.Controls.Add(fit);
-            toolbar.Controls.Add(zoomOut);
-            toolbar.Controls.Add(zoomIn);
-            toolbar.Controls.Add(displayLabel);
-            toolbar.Controls.Add(_displayModeCombo);
-            toolbar.Controls.Add(_undoButton);
-            toolbar.Controls.Add(_redoButton);
-            toolbar.Controls.Add(instruction);
-            toolbar.Controls.Add(_statusLabel);
-
-            _canvas = new CollageDesignCanvas(
-                _theme,
-                _fontFamily,
-                _gridSize,
-                _landscape,
-                _slots,
-                _unplaced,
-                _pasteboardPositions,
-                _captions,
-                _customNames,
-                _originalOrder,
-                GetThumbnail,
-                _totalPages);
-
-            _canvas.Dock = DockStyle.Fill;
-            _canvas.ImageSelected +=
-                path => SelectImage(path);
-            _canvas.LayoutChanged +=
-                (s, e) => RefreshAll();
-            _canvas.SnapshotRequested +=
-                (s, e) => PushUndoSnapshot();
 
             editor.Controls.Add(_canvas);
+            editor.Controls.Add(line);
             editor.Controls.Add(toolbar);
 
             return editor;
+        }
+
+        private FlowLayoutPanel CreateToolbar()
+        {
+            // Wraps onto a second row when the window is narrow, so the
+            // tools never overlap.
+            FlowLayoutPanel toolbar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = true,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(8, 7, 8, 3),
+                BackColor = _theme.ContentBg
+            };
+
+            // Pages.
+            _previousPageButton = CreateToolButton(
+                "◀",
+                32,
+                "Previous page  (Page Up)",
+                () => _canvas.ScrollToPage(_canvas.CurrentPage - 1));
+
+            _pageCombo = CreateToolCombo(132);
+            _pageCombo.SelectedIndexChanged +=
+                (s, e) =>
+                {
+                    if (!_updatingPageCombo && _pageCombo.SelectedIndex >= 0)
+                        _canvas.ScrollToPage(_pageCombo.SelectedIndex);
+                };
+            _toolTip.SetToolTip(_pageCombo, "Jump to a page");
+
+            _nextPageButton = CreateToolButton(
+                "▶",
+                32,
+                "Next page  (Page Down)",
+                () => _canvas.ScrollToPage(_canvas.CurrentPage + 1));
+
+            // Each group wraps as one piece, so a label never ends up on a
+            // different row from the control it belongs to.
+            toolbar.Controls.Add(
+                CreateToolGroup(
+                    _previousPageButton,
+                    _pageCombo,
+                    _nextPageButton,
+                    CreateToolSeparator()));
+
+            // Zoom.
+            _zoomLabel = CreateLabel(
+                "100%",
+                8.5f,
+                FontStyle.Bold,
+                _theme.TextColor);
+            _zoomLabel.Size = new Size(46, 30);
+            _zoomLabel.Margin = new Padding(0, 0, 4, 4);
+            _zoomLabel.TextAlign = ContentAlignment.MiddleCenter;
+
+            toolbar.Controls.Add(
+                CreateToolGroup(
+                    CreateToolButton(
+                        "−",
+                        32,
+                        "Zoom out  (Ctrl + mouse wheel)",
+                        () => _canvas.ZoomBy(1f / 1.2f)),
+                    _zoomLabel,
+                    CreateToolButton(
+                        "+",
+                        32,
+                        "Zoom in  (Ctrl + mouse wheel)",
+                        () => _canvas.ZoomBy(1.2f)),
+                    CreateToolButton(
+                        "Fit page",
+                        70,
+                        "Show one whole page  (Ctrl+0)",
+                        () => _canvas.FitPage()),
+                    CreateToolButton(
+                        "Fit width",
+                        74,
+                        "Make the page as wide as the workspace",
+                        () => _canvas.FitWidth()),
+                    CreateToolSeparator()));
+
+            // Undo and whole-arrangement actions.
+            _undoButton = CreateToolButton("↶ Undo", 72, "Undo  (Ctrl+Z)", Undo);
+            _redoButton = CreateToolButton("↷ Redo", 72, "Redo  (Ctrl+Y)", Redo);
+
+            _arrangeMenu = CreateArrangeMenu();
+
+            Button arrange = null;
+            arrange = CreateToolButton(
+                "Arrange ▾",
+                86,
+                "Actions for the whole arrangement",
+                () => _arrangeMenu.Show(arrange, new Point(0, arrange.Height)));
+
+            toolbar.Controls.Add(
+                CreateToolGroup(
+                    _undoButton,
+                    _redoButton,
+                    CreateToolSeparator(),
+                    arrange,
+                    CreateToolSeparator()));
+
+            // What a drop onto an occupied cell does.
+            _dropModeCombo = CreateToolCombo(128);
+            _dropModeCombo.Items.AddRange(
+                new object[] { "Swap images", "Insert and shift" });
+            _dropModeCombo.SelectedIndex = 0;
+            _dropModeCombo.SelectedIndexChanged +=
+                (s, e) =>
+                {
+                    bool insert = _dropModeCombo.SelectedIndex == 1;
+                    _canvas.InsertMode = insert;
+                    _navigator.InsertMode = insert;
+                };
+            _toolTip.SetToolTip(
+                _dropModeCombo,
+                "Swap: the two images trade places.\n" +
+                "Insert and shift: the image is inserted and the others move along.\n" +
+                "Hold Shift while dropping to use the other mode once.");
+
+            toolbar.Controls.Add(
+                CreateToolGroup(
+                    CreateToolLabel("On drop:"),
+                    _dropModeCombo));
+
+            // Text under each image.
+            _displayModeCombo = CreateToolCombo(146);
+            _displayModeCombo.Items.AddRange(
+                new object[]
+                {
+                    "File name",
+                    "File name + remark",
+                    "Remark only",
+                    "No text"
+                });
+            _displayModeCombo.SelectedIndex =
+                DisplayModeToIndex(ResultDisplayMode);
+            _displayModeCombo.SelectedIndexChanged +=
+                (s, e) =>
+                {
+                    ResultDisplayMode =
+                        IndexToDisplayMode(_displayModeCombo.SelectedIndex);
+                    _canvas.DisplayMode = ResultDisplayMode;
+                };
+            _toolTip.SetToolTip(
+                _displayModeCombo,
+                "Text printed below each image in the PDF");
+
+            _textSizeCombo = CreateToolCombo(62);
+
+            foreach (int size in CollagePageSetup.CaptionFontChoices)
+                _textSizeCombo.Items.Add(size + " pt");
+
+            _textSizeCombo.SelectedIndex =
+                CollagePageSetup.NearestCaptionFontChoice(_page.CaptionFontPoints);
+            _textSizeCombo.SelectedIndexChanged +=
+                (s, e) =>
+                {
+                    if (_textSizeCombo.SelectedIndex < 0)
+                        return;
+
+                    _page.CaptionFontPoints =
+                        CollagePageSetup.CaptionFontChoices[
+                            _textSizeCombo.SelectedIndex];
+                    _dirty = true;
+                    _canvas.Invalidate();
+                };
+            _toolTip.SetToolTip(
+                _textSizeCombo,
+                "Size of the text printed below each image");
+
+            toolbar.Controls.Add(
+                CreateToolGroup(
+                    CreateToolLabel("Text:"),
+                    _displayModeCombo,
+                    _textSizeCombo,
+                    CreateToolSeparator()));
+
+            // Columns x rows on each page. The images keep their order and
+            // flow into the new grid.
+            _columnsCombo = CreateToolCombo(46);
+            _rowsCombo = CreateToolCombo(46);
+
+            for (int i = 1; i <= CollagePageSetup.MaxColumns; i++)
+                _columnsCombo.Items.Add(i.ToString());
+
+            for (int i = 1; i <= CollagePageSetup.MaxRows; i++)
+                _rowsCombo.Items.Add(i.ToString());
+
+            _columnsCombo.SelectedIndex = _page.Columns - 1;
+            _rowsCombo.SelectedIndex = _page.Rows - 1;
+            _columnsCombo.SelectedIndexChanged += (s, e) => ChangeGrid();
+            _rowsCombo.SelectedIndexChanged += (s, e) => ChangeGrid();
+            _toolTip.SetToolTip(_columnsCombo, "Columns on each page");
+            _toolTip.SetToolTip(_rowsCombo, "Rows on each page");
+
+            toolbar.Controls.Add(
+                CreateToolGroup(
+                    CreateToolLabel("Grid:"),
+                    _columnsCombo,
+                    CreateToolLabel("×"),
+                    _rowsCombo));
+
+            return toolbar;
+        }
+
+        private void ChangeGrid()
+        {
+            if (_updatingGrid ||
+                _columnsCombo.SelectedIndex < 0 ||
+                _rowsCombo.SelectedIndex < 0)
+                return;
+
+            int columns = _columnsCombo.SelectedIndex + 1;
+            int rows = _rowsCombo.SelectedIndex + 1;
+
+            if (columns == _page.Columns && rows == _page.Rows)
+                return;
+
+            string selected = _canvas.SelectedPath;
+
+            PushUndo();
+            _model.SetGrid(columns, rows);
+
+            // Show the whole page in its new shape, at the image that was
+            // being worked on.
+            _canvas.FitPage();
+
+            if (selected != null)
+                _canvas.SelectPath(selected, true);
+            else
+                _canvas.ScrollToPage(0);
+        }
+
+        private static FlowLayoutPanel CreateToolGroup(params Control[] controls)
+        {
+            FlowLayoutPanel group = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                FlowDirection = FlowDirection.LeftToRight,
+                Margin = Padding.Empty
+            };
+
+            group.Controls.AddRange(controls);
+            return group;
+        }
+
+        private Panel CreateNavigatorPanel()
+        {
+            Panel panel = new Panel
+            {
+                BackColor = _theme.ContentBg
+            };
+
+            Label heading = CreateLabel(
+                "PAGES",
+                9f,
+                FontStyle.Bold,
+                _theme.TextColor);
+            heading.Dock = DockStyle.Top;
+            heading.Height = 38;
+            heading.Padding = new Padding(12, 0, 0, 0);
+            heading.TextAlign = ContentAlignment.MiddleLeft;
+
+            Panel line = new Panel
+            {
+                Dock = DockStyle.Left,
+                Width = 1,
+                BackColor = _theme.BorderColor
+            };
+
+            _navigator =
+                new CollagePageNavigator(
+                    _model,
+                    _thumbnails,
+                    _theme,
+                    _fontFamily);
+            _navigator.Dock = DockStyle.Fill;
+            _navigator.IsHighlighted = path => _inspectedSet.Contains(path);
+            _navigator.ContextMenuStrip = CreateNavigatorMenu();
+            _navigator.PageActivated += page => _canvas.ScrollToPage(page);
+            _navigator.ImagesDropped += DropImages;
+            _navigator.AddPageRequested += (s, e) => AddPage();
+
+            panel.Controls.Add(_navigator);
+            panel.Controls.Add(heading);
+            panel.Controls.Add(line);
+
+            return panel;
         }
 
         private Panel CreateFooter()
@@ -666,125 +981,381 @@ namespace NPPLPrintMaster
             Panel footer = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 62,
+                Height = 58,
                 BackColor = _theme.ContentBg,
-                Padding = new Padding(12, 10, 12, 10)
+                Padding = new Padding(14, 10, 12, 10)
             };
 
-            Button cancel = CreateButton(
-                "Cancel",
-                105,
-                _theme.ControlBg,
-                false);
-            cancel.Dock = DockStyle.Right;
-            cancel.Click +=
-                (s, e) =>
-                {
-                    DialogResult = DialogResult.Cancel;
-                    Close();
-                };
+            Panel line = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 1,
+                BackColor = _theme.BorderColor
+            };
 
-            Button use = CreateButton(
-                "✓  Use This Arrangement",
-                195,
-                _theme.ActiveColor,
-                true);
-            use.Dock = DockStyle.Right;
-            use.Margin = new Padding(0, 0, 8, 0);
-            use.Click +=
-                (s, e) =>
-                {
-                    ApplyCaption();
+            Panel statusPanel = new Panel
+            {
+                Dock = DockStyle.Fill
+            };
 
-                    ResultSlots = new List<string>(_slots);
-                    ResultCaptions =
-                        new Dictionary<string, string>(
-                            _captions,
-                            StringComparer.OrdinalIgnoreCase);
+            _statusLabel = CreateLabel(
+                string.Empty,
+                9f,
+                FontStyle.Bold,
+                _theme.TextColor);
+            _statusLabel.Dock = DockStyle.Top;
+            _statusLabel.Height = 19;
 
-                    ResultCustomNames =
-                        new Dictionary<string, string>(
-                            _customNames,
-                            StringComparer.OrdinalIgnoreCase);
-
-                    string selectedDisplay =
-                        _displayModeCombo == null ||
-                        _displayModeCombo.SelectedItem == null
-                            ? "Filename + Custom Remark"
-                            : _displayModeCombo.SelectedItem.ToString();
-
-                    ResultDisplayMode =
-                        selectedDisplay == "Filename only"
-                            ? "Filename"
-                            : selectedDisplay == "Custom Remark only"
-                                ? "Remark"
-                                : "Both";
-
-                    DialogResult = DialogResult.OK;
-                    Close();
-                };
-
-            Label help = CreateLabel(
-                "White page is the PDF. Outside the page is design space only. " +
-                "Images left outside the page remain unplaced and will be excluded from the PDF.",
-                8.5f,
+            Label tips = CreateLabel(
+                "Drag an image to another cell or page  •  Shift + drop inserts  •  " +
+                "double-click an image to edit its remark  •  Delete takes it off the page",
+                8.25f,
                 FontStyle.Regular,
                 _theme.MutedTextColor);
-            help.Dock = DockStyle.Left;
-            help.Width = 850;
-            help.TextAlign = ContentAlignment.MiddleLeft;
+            tips.Dock = DockStyle.Top;
+            tips.Height = 19;
 
+            statusPanel.Controls.Add(tips);
+            statusPanel.Controls.Add(_statusLabel);
+
+            Button cancel = CreateButton("Cancel", 100, false);
+            cancel.Dock = DockStyle.Right;
+            cancel.Click += (s, e) => Close();
+
+            Panel gap = new Panel
+            {
+                Dock = DockStyle.Right,
+                Width = 8
+            };
+
+            Button use = CreateButton("✓  Use This Arrangement", 196, true);
+            use.Dock = DockStyle.Right;
+            use.Click += (s, e) => AcceptArrangement();
+
+            footer.Controls.Add(statusPanel);
             footer.Controls.Add(cancel);
+            footer.Controls.Add(gap);
             footer.Controls.Add(use);
-            footer.Controls.Add(help);
 
-            return footer;
+            Panel host = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = footer.Height + 1
+            };
+
+            footer.Dock = DockStyle.Fill;
+            host.Controls.Add(footer);
+            host.Controls.Add(line);
+
+            return host;
         }
 
-        private void SetCurrentPage(int pageIndex)
+        // ------------------------------------------------------------
+        // Menus
+        // ------------------------------------------------------------
+        private ContextMenuStrip CreateArrangeMenu()
         {
-            if (_totalPages <= 0)
-                return;
+            ContextMenuStrip menu = new ContextMenuStrip();
 
-            _currentPage = Math.Max(0, Math.Min(_totalPages - 1, pageIndex));
+            ToolStripItem fill = menu.Items.Add("Place all unplaced images");
+            fill.Click +=
+                (s, e) =>
+                {
+                    if (_model.UnplacedCount == 0)
+                        return;
 
-            if (_pageCombo != null && _pageCombo.SelectedIndex != _currentPage)
-                _pageCombo.SelectedIndex = _currentPage;
+                    PushUndo();
+                    _model.FillEmptyCells();
+                };
 
-            if (_canvas != null)
-            {
-                _canvas.FitPage();
-            }
+            ToolStripItem close = menu.Items.Add("Close gaps between images");
+            close.Click +=
+                (s, e) =>
+                {
+                    PushUndo();
+                    _model.CloseGaps();
+                };
 
-            UpdateStatus();
+            ToolStripItem reset = menu.Items.Add("Reset to automatic order");
+            reset.Click +=
+                (s, e) =>
+                {
+                    PushUndo();
+                    _model.ResetToDefaultOrder();
+                    _canvas.ScrollToPage(0);
+                };
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            ToolStripItem add = menu.Items.Add("Add blank page");
+            add.Click += (s, e) => AddPage();
+
+            ToolStripItem removeEmpty = menu.Items.Add("Remove empty pages");
+            removeEmpty.Click +=
+                (s, e) =>
+                {
+                    PushUndo();
+                    _model.RemoveEmptyPages();
+                };
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            ToolStripItem clear = menu.Items.Add("Take all images off the pages");
+            clear.Click +=
+                (s, e) =>
+                {
+                    if (_model.PlacedCount == 0)
+                        return;
+
+                    PushUndo();
+                    _model.ClearAll();
+                };
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            ToolStripItem addImages = menu.Items.Add("Add images…");
+            addImages.Click += (s, e) => AddImagesFromDialog();
+
+            ToolStripItem save = menu.Items.Add("Save layout to a file…");
+            save.Click += (s, e) => SaveLayoutToFile();
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            ToolStripItem exportRemarks =
+                menu.Items.Add("Export remarks to Excel…");
+            exportRemarks.Click += (s, e) => ExportRemarksWithDialog();
+
+            ToolStripItem importRemarks =
+                menu.Items.Add("Import remarks from Excel…");
+            importRemarks.Click += (s, e) => ImportRemarksWithDialog();
+
+            menu.Opening +=
+                (s, e) =>
+                {
+                    fill.Enabled = _model.UnplacedCount > 0;
+                    clear.Enabled = _model.PlacedCount > 0;
+                };
+
+            return menu;
         }
 
-        private void NavigatePage(int delta)
+        private ContextMenuStrip CreateLibraryMenu()
         {
-            SetCurrentPage(_currentPage + delta);
+            ContextMenuStrip menu = new ContextMenuStrip();
+
+            ToolStripMenuItem place =
+                new ToolStripMenuItem("Place on page")
+                {
+                    ShortcutKeyDisplayString = "Enter"
+                };
+            place.Click += (s, e) => PlaceInNextEmpty(_library.SelectedPaths);
+
+            ToolStripMenuItem show = new ToolStripMenuItem("Show on page");
+            show.Click +=
+                (s, e) =>
+                {
+                    string path =
+                        _library.SelectedPaths.FirstOrDefault(_model.IsPlaced);
+
+                    if (path != null)
+                        ShowOnPage(path);
+                };
+
+            ToolStripMenuItem remove =
+                new ToolStripMenuItem("Take off the page")
+                {
+                    ShortcutKeyDisplayString = "Del"
+                };
+            remove.Click += (s, e) => UnplaceImages(_library.SelectedPaths);
+
+            ToolStripMenuItem discard =
+                new ToolStripMenuItem("Remove from this collage");
+            discard.Click += (s, e) => RemoveImages(_library.SelectedPaths);
+
+            menu.Items.AddRange(
+                new ToolStripItem[]
+                {
+                    place,
+                    show,
+                    remove,
+                    new ToolStripSeparator(),
+                    discard
+                });
+
+            menu.Opening +=
+                (s, e) =>
+                {
+                    IList<string> selected = _library.SelectedPaths;
+
+                    if (selected.Count == 0)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+
+                    bool anyPlaced = selected.Any(_model.IsPlaced);
+                    bool anyUnplaced = selected.Any(p => !_model.IsPlaced(p));
+
+                    place.Enabled = anyUnplaced;
+                    show.Enabled = anyPlaced;
+                    remove.Enabled = anyPlaced;
+                };
+
+            return menu;
         }
 
-        private void CollageArrangementForm_KeyDown(
-            object sender,
-            KeyEventArgs e)
+        private ContextMenuStrip CreateCanvasMenu()
         {
-            if (e.Control && e.KeyCode == Keys.Z)
-            {
-                Undo();
-                e.SuppressKeyPress = true;
-            }
-            else if (e.Control && e.KeyCode == Keys.Y)
-            {
-                Redo();
-                e.SuppressKeyPress = true;
-            }
-            else if (e.KeyCode == Keys.F)
-            {
-                _canvas.FitPage();
-                e.SuppressKeyPress = true;
-            }
+            ContextMenuStrip menu = new ContextMenuStrip();
+
+            ToolStripMenuItem edit =
+                new ToolStripMenuItem("Edit remark")
+                {
+                    ShortcutKeyDisplayString = "F2"
+                };
+            edit.Click +=
+                (s, e) =>
+                {
+                    if (_canvas.SelectedPath != null)
+                        _canvas.BeginEdit(_canvas.SelectedPath, false);
+                };
+
+            ToolStripMenuItem editNote =
+                new ToolStripMenuItem("Edit remark 2 (extra line)")
+                {
+                    ShortcutKeyDisplayString = "Shift+F2"
+                };
+            editNote.Click +=
+                (s, e) =>
+                {
+                    if (_canvas.SelectedPath != null)
+                        _canvas.BeginEdit(_canvas.SelectedPath, true);
+                };
+
+            ToolStripMenuItem remove =
+                new ToolStripMenuItem("Take off the page")
+                {
+                    ShortcutKeyDisplayString = "Del"
+                };
+            remove.Click +=
+                (s, e) =>
+                {
+                    if (_canvas.SelectedPath != null)
+                        UnplaceImages(new[] { _canvas.SelectedPath });
+                };
+
+            ToolStripMenuItem locate = new ToolStripMenuItem("Show in library");
+            locate.Click +=
+                (s, e) =>
+                {
+                    string path = _canvas.SelectedPath;
+                    if (path == null)
+                        return;
+
+                    if (!_library.Contains(path))
+                    {
+                        _searchBox.Clear();
+                        SetFilter(LibraryFilter.All);
+                    }
+
+                    _library.SelectSingle(path, true);
+                    _library.Focus();
+                };
+
+            ToolStripMenuItem clearPage =
+                new ToolStripMenuItem("Take all images off this page");
+            clearPage.Click +=
+                (s, e) =>
+                {
+                    if (_canvas.SelectedSlot >= 0)
+                        ClearPage(_canvas.SelectedSlot / _model.CellsPerPage);
+                };
+
+            menu.Items.AddRange(
+                new ToolStripItem[]
+                {
+                    edit,
+                    editNote,
+                    remove,
+                    locate,
+                    new ToolStripSeparator(),
+                    clearPage
+                });
+
+            menu.Opening +=
+                (s, e) =>
+                {
+                    if (_canvas.SelectedSlot < 0)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+
+                    bool hasImage = _canvas.SelectedPath != null;
+
+                    edit.Enabled = hasImage;
+                    editNote.Enabled = hasImage;
+                    remove.Enabled = hasImage;
+                    locate.Enabled = hasImage;
+                    clearPage.Enabled =
+                        _model.CountOnPage(
+                            _canvas.SelectedSlot / _model.CellsPerPage) > 0;
+                };
+
+            return menu;
         }
 
+        private ContextMenuStrip CreateNavigatorMenu()
+        {
+            ContextMenuStrip menu = new ContextMenuStrip();
+
+            ToolStripMenuItem insert =
+                new ToolStripMenuItem("Insert blank page before");
+            insert.Click +=
+                (s, e) =>
+                {
+                    int page = _navigator.ContextPage;
+
+                    PushUndo();
+                    _model.InsertPage(page);
+                    _canvas.ScrollToPage(page);
+                };
+
+            ToolStripMenuItem clear =
+                new ToolStripMenuItem("Take all images off this page");
+            clear.Click += (s, e) => ClearPage(_navigator.ContextPage);
+
+            ToolStripMenuItem delete = new ToolStripMenuItem("Delete page");
+            delete.Click +=
+                (s, e) =>
+                {
+                    PushUndo();
+                    _model.DeletePage(_navigator.ContextPage);
+                };
+
+            menu.Items.AddRange(new ToolStripItem[] { insert, clear, delete });
+
+            menu.Opening +=
+                (s, e) =>
+                {
+                    int page = _navigator.ContextPage;
+
+                    if (page < 0 || page >= _model.PageCount)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+
+                    clear.Enabled = _model.CountOnPage(page) > 0;
+                    delete.Enabled = _model.PageCount > 1;
+                };
+
+            return menu;
+        }
+
+        // ------------------------------------------------------------
+        // Control factories
+        // ------------------------------------------------------------
         private Label CreateLabel(
             string text,
             float size,
@@ -801,507 +1372,1176 @@ namespace NPPLPrintMaster
             };
         }
 
-        private Button CreateButton(
-            string text,
-            int width,
-            Color backColor,
-            bool primary)
+        private Button CreateButton(string text, int width, bool primary)
         {
             Button button = new Button
             {
                 Text = text,
                 Width = width,
-                Height = 34,
-                BackColor = backColor,
-                ForeColor =
-                    primary
-                        ? ThemeManager.GetContrastTextColor(backColor)
-                        : _theme.TextColor,
+                Height = 30,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
+                UseVisualStyleBackColor = false,
                 Font = new Font(
                     _fontFamily,
                     8.5f,
                     primary ? FontStyle.Bold : FontStyle.Regular)
             };
 
-            button.FlatAppearance.BorderColor =
-                primary
-                    ? backColor
-                    : _theme.BorderColor;
-            button.FlatAppearance.MouseOverBackColor =
-                _theme.ButtonHover;
-
+            StyleButton(button, primary);
             return button;
         }
 
-        private void RefreshAll()
+        private void StyleButton(Button button, bool primary)
         {
-            _canvas.CurrentPage = _currentPage;
-            _canvas.Invalidate();
-            RefreshImageBrowser();
-            UpdateSelectedLabel();
-            UpdateStatus();
-            UpdateUndoButtons();
+            Color back = primary ? _theme.ActiveColor : _theme.ControlBg;
+
+            button.BackColor = back;
+            button.ForeColor =
+                primary
+                    ? ThemeManager.GetContrastTextColor(back)
+                    : _theme.TextColor;
+            button.FlatAppearance.BorderColor =
+                primary ? back : _theme.BorderColor;
+            button.FlatAppearance.MouseOverBackColor =
+                primary
+                    ? CollageWorkspaceUi.Blend(back, Color.White, 0.14f)
+                    : _theme.ButtonHover;
         }
 
-        private void RefreshImageBrowser()
+        private Button CreateToolButton(
+            string text,
+            int width,
+            string toolTip,
+            Action onClick)
         {
-            if (_imageBrowser == null)
-                return;
+            Button button = CreateButton(text, width, false);
+            button.Margin = new Padding(0, 0, 4, 4);
+            button.Click += (s, e) => onClick();
+            _toolTip.SetToolTip(button, toolTip);
+            return button;
+        }
 
-            string filter =
-                _searchBox == null
-                    ? string.Empty
-                    : _searchBox.Text.Trim();
+        private ComboBox CreateToolCombo(int width)
+        {
+            return new CollageThemedComboBox(_theme)
+            {
+                Width = width,
+                Margin = new Padding(0, 3, 4, 4)
+            };
+        }
 
-            string status =
-                _imageStatusCombo == null ||
-                _imageStatusCombo.SelectedItem == null
-                    ? "Unplaced"
-                    : _imageStatusCombo.SelectedItem.ToString();
+        private Label CreateToolLabel(string text)
+        {
+            Label label = CreateLabel(
+                text,
+                8.5f,
+                FontStyle.Regular,
+                _theme.MutedTextColor);
+            label.AutoSize = true;
+            label.Margin = new Padding(2, 8, 2, 0);
+            return label;
+        }
 
-            int thumb =
-                _thumbnailSizeTrackBar == null
-                    ? 3
-                    : _thumbnailSizeTrackBar.Value;
+        private Panel CreateToolSeparator()
+        {
+            return new Panel
+            {
+                Width = 1,
+                Height = 22,
+                Margin = new Padding(5, 4, 9, 4),
+                BackColor = _theme.BorderColor
+            };
+        }
 
-            int width =
-                thumb == 1
-                    ? 96
-                    : thumb == 2
-                        ? 128
-                        : 168;
+        private static int DisplayModeToIndex(string mode)
+        {
+            return mode == CollageCellLayout.ModeFilename
+                ? 0
+                : mode == CollageCellLayout.ModeRemark
+                    ? 2
+                    : mode == CollageCellLayout.ModeNone
+                        ? 3
+                        : 1;
+        }
 
-            int height =
-                thumb == 1
-                    ? 105
-                    : thumb == 2
-                        ? 135
-                        : 165;
+        private static string IndexToDisplayMode(int index)
+        {
+            return index == 0
+                ? CollageCellLayout.ModeFilename
+                : index == 2
+                    ? CollageCellLayout.ModeRemark
+                    : index == 3
+                        ? CollageCellLayout.ModeNone
+                        : CollageCellLayout.ModeBoth;
+        }
 
-            _imageBrowser.SuspendLayout();
+        // ------------------------------------------------------------
+        // Refreshing
+        // ------------------------------------------------------------
+        private void RefreshAll()
+        {
+            _updatingGrid = true;
             try
             {
-                _imageBrowser.Controls.Clear();
-
-                IEnumerable<string> query = _originalOrder;
-
-                if (string.Equals(status, "Unplaced", StringComparison.OrdinalIgnoreCase))
-                    query = query.Where(p => _unplaced.Contains(p));
-                else if (string.Equals(status, "Placed", StringComparison.OrdinalIgnoreCase))
-                    query = query.Where(p => !_unplaced.Contains(p));
-
-                if (!string.IsNullOrWhiteSpace(filter))
-                {
-                    query = query.Where(
-                        p =>
-                            Path.GetFileName(p).IndexOf(
-                                filter,
-                                StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            (_captions.ContainsKey(p) &&
-                             _captions[p].IndexOf(
-                                 filter,
-                                 StringComparison.OrdinalIgnoreCase) >= 0));
-                }
-
-                List<string> paths = query.ToList();
-
-                _imageCountLabel.Text =
-                    paths.Count + " shown  •  " +
-                    (_originalOrder.Count - _unplaced.Count) +
-                    " placed  •  " +
-                    _unplaced.Count + " unplaced";
-
-                foreach (string path in paths)
-                    _imageBrowser.Controls.Add(
-                        CreateBrowserCard(path, width, height));
+                _columnsCombo.SelectedIndex = _page.Columns - 1;
+                _rowsCombo.SelectedIndex = _page.Rows - 1;
             }
             finally
             {
-                _imageBrowser.ResumeLayout();
-            }
-        }
-
-        private Panel CreateBrowserCard(
-            string path,
-            int width,
-            int height)
-        {
-            Panel card = new Panel
-            {
-                Width = width,
-                Height = height,
-                BackColor = _theme.ControlBg,
-                Margin = new Padding(4),
-                Cursor = Cursors.Hand,
-                Tag = path
-            };
-
-            PictureBox picture = new PictureBox
-            {
-                Location = new Point(5, 5),
-                Size = new Size(width - 10, height - 48),
-                SizeMode = PictureBoxSizeMode.Zoom,
-                BackColor = _theme.BgLight,
-                Image = GetThumbnail(path, width - 10, height - 48),
-                Tag = path
-            };
-
-            Label name = CreateLabel(
-                Path.GetFileNameWithoutExtension(path),
-                7f,
-                FontStyle.Regular,
-                _theme.TextColor);
-            name.Location = new Point(5, height - 42);
-            name.Size = new Size(width - 10, 18);
-            name.TextAlign = ContentAlignment.MiddleCenter;
-            name.Tag = path;
-
-            string stateText =
-                _unplaced.Contains(path)
-                    ? "UNPLACED"
-                    : "PLACED";
-            Label state = CreateLabel(
-                stateText,
-                6.8f,
-                FontStyle.Bold,
-                _unplaced.Contains(path)
-                    ? _theme.MutedTextColor
-                    : _theme.ActiveColor);
-            state.Location = new Point(5, height - 24);
-            state.Size = new Size(width - 10, 18);
-            state.TextAlign = ContentAlignment.MiddleCenter;
-            state.Tag = path;
-
-            card.Controls.Add(picture);
-            card.Controls.Add(name);
-            card.Controls.Add(state);
-
-            EventHandler click =
-                (s, e) => SelectImage(path);
-
-            MouseEventHandler down =
-                (s, e) =>
-                {
-                    if (e.Button != MouseButtons.Left)
-                        return;
-
-                    SelectImage(path);
-
-                    DataObject data =
-                        new DataObject(
-                            ImagePathFormat,
-                            path);
-
-                    DoDragDrop(
-                        data,
-                        DragDropEffects.Move);
-                };
-
-            card.Click += click;
-            picture.Click += click;
-            name.Click += click;
-            state.Click += click;
-
-            card.MouseDown += down;
-            picture.MouseDown += down;
-            name.MouseDown += down;
-            state.MouseDown += down;
-
-            return card;
-        }
-
-        private void SelectImage(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path) ||
-                !_originalOrder.Any(
-                    p => string.Equals(
-                        p,
-                        path,
-                        StringComparison.OrdinalIgnoreCase)))
-                return;
-
-            if (_captionBox != null &&
-                _captionBox.Modified &&
-                !string.Equals(
-                    _selectedImagePath,
-                    path,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                ApplyCaption();
+                _updatingGrid = false;
             }
 
-            _selectedImagePath = path;
-            UpdateSelectedLabel();
-            _canvas.SelectImage(path);
+            _subtitleLabel.Text = DescribePage();
+
+            RefreshLibrary();
+            _canvas.OnModelChanged();
+            _navigator.OnModelChanged();
+            RefreshView();
+            RefreshInspector();
+            RefreshStatus();
+            RefreshUndoButtons();
         }
 
-        private void UpdateSelectedLabel()
+        private void RefreshLibrary()
         {
-            if (_selectedLabel == null)
-                return;
-
-            if (string.IsNullOrWhiteSpace(_selectedImagePath))
+            if (_imagesByNameVersion != _model.ImageSetVersion)
             {
-                _selectedLabel.Text = "No image selected";
-                if (_captionBox != null)
-                {
-                    _captionBox.Text = string.Empty;
-                    _captionBox.Enabled = false;
-                }
-                if (_captionApplyButton != null)
-                    _captionApplyButton.Enabled = false;
-                return;
+                _imagesByName = new List<string>(_model.Images);
+                _imagesByName.Sort(
+                    (a, b) => CollageWorkspaceUi.CompareNatural(
+                        CollageArrangementModel.GetFileTitle(a),
+                        CollageArrangementModel.GetFileTitle(b)));
+
+                _imagesByNameVersion = _model.ImageSetVersion;
             }
 
-            bool placed = !_unplaced.Contains(_selectedImagePath);
+            IEnumerable<string> query;
 
-            int slot =
-                _slots.FindIndex(
-                    p => string.Equals(
-                        p,
-                        _selectedImagePath,
-                        StringComparison.OrdinalIgnoreCase));
-
-            string location =
-                placed
-                    ? "Placed • Page " +
-                      ((slot / (_gridSize * _gridSize)) + 1) +
-                      " • Cell " +
-                      ((slot % (_gridSize * _gridSize)) + 1)
-                    : "Unplaced • Pasteboard";
-
-            _selectedLabel.Text =
-                Path.GetFileName(_selectedImagePath) +
-                Environment.NewLine +
-                location;
-
-            string caption;
-            _captions.TryGetValue(
-                _selectedImagePath,
-                out caption);
-
-            _captionBox.Text = caption ?? string.Empty;
-            _captionBox.Enabled = true;
-            _captionApplyButton.Enabled = true;
-        }
-
-        private void ApplyCaption()
-        {
-            if (string.IsNullOrWhiteSpace(_selectedImagePath) ||
-                _captionBox == null)
-                return;
-
-            string caption = _captionBox.Text.Trim();
-
-            if (string.IsNullOrWhiteSpace(caption))
+            if (_filter == LibraryFilter.Placed)
             {
-                _captions.Remove(_selectedImagePath);
-                _customNames.Remove(_selectedImagePath);
+                // Placed images are listed in page order.
+                query =
+                    _model.Images
+                        .Where(_model.IsPlaced)
+                        .OrderBy(_model.IndexOf);
+            }
+            else if (_filter == LibraryFilter.Unplaced)
+            {
+                query = _imagesByName.Where(p => !_model.IsPlaced(p));
             }
             else
             {
-                _captions[_selectedImagePath] = caption;
-                // Keep the legacy custom-name result synchronized so older
-                // saved arrangements retain the user's custom display text.
-                _customNames[_selectedImagePath] = caption;
+                query = _imagesByName;
             }
 
-            _captionBox.Modified = false;
-            _canvas.Invalidate();
-            RefreshImageBrowser();
-            UpdateSelectedLabel();
+            string search = _searchBox.Text.Trim();
+
+            string[] terms =
+                search.Split(
+                    new[] { ' ' },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            if (terms.Length > 0)
+                query = query.Where(p => MatchesSearch(p, terms));
+
+            string emptyText =
+                terms.Length > 0
+                    ? "No images match \"" + search + "\"."
+                    : _filter == LibraryFilter.Unplaced
+                        ? "Every image is on a page.\n\n" +
+                          "Drag an image here from a page to take it off."
+                        : _filter == LibraryFilter.Placed
+                            ? "No images are on a page yet.\n\n" +
+                              "Drag images from the library onto a page."
+                            : "No images.";
+
+            _library.SetItems(query.ToList(), emptyText);
+
+            _filterButtons[0].Text = "All  " + _model.Images.Count;
+            _filterButtons[1].Text = "Not placed  " + _model.UnplacedCount;
+            _filterButtons[2].Text = "Placed  " + _model.PlacedCount;
+
+            for (int i = 0; i < _filterButtons.Length; i++)
+                StyleButton(_filterButtons[i], (int)_filter == i);
+
+            for (int i = 0; i < _sizeButtons.Length; i++)
+                StyleButton(_sizeButtons[i], _library.SizeLevel == i + 1);
         }
 
-        private void UpdateStatus()
+        private bool MatchesSearch(string path, string[] terms)
         {
-            if (_statusLabel == null)
+            // The file name and both remarks are searched together.
+            string text =
+                Path.GetFileName(path) + "\n" +
+                _model.GetRemark(path) + "\n" +
+                _model.GetNote(path);
+
+            foreach (string term in terms)
+            {
+                if (text.IndexOf(term, StringComparison.OrdinalIgnoreCase) < 0)
+                    return false;
+            }
+
+            return true;
+        }
+
+        // Follows the canvas as it scrolls and zooms.
+        private void RefreshView()
+        {
+            // The canvas reports its first resize while the window is
+            // still being built.
+            if (_canvas == null || _navigator == null || _pageCombo == null)
                 return;
 
-            int placed =
-                _slots.Count(
-                    p => !string.IsNullOrWhiteSpace(p));
+            int pages = _model.PageCount;
+            int current = _canvas.CurrentPage;
 
-            _pageLabelSafe();
-
-            _statusLabel.Text =
-                placed + " placed  •  " +
-                _unplaced.Count + " unplaced  •  " +
-                "Zoom " +
-                Math.Round(_canvas == null ? 1.0 : _canvas.Zoom * 100.0) +
-                "%";
-        }
-
-        private void _pageLabelSafe()
-        {
-            // Kept intentionally small; the page selector is the source of truth.
-        }
-
-        private void RebuildUnplacedSet()
-        {
-            _unplaced.Clear();
-
-            foreach (string path in _originalOrder)
-            {
-                bool placed =
-                    _slots.Any(
-                        p => string.Equals(
-                            p,
-                            path,
-                            StringComparison.OrdinalIgnoreCase));
-
-                if (!placed)
-                    _unplaced.Add(path);
-            }
-        }
-
-        private void InitializePasteboardPositions()
-        {
-            float pageWidth = _landscape ? 1122f : 794f;
-            float pageHeight = _landscape ? 794f : 1122f;
-
-            int index = 0;
-
-            foreach (string path in _unplaced)
-            {
-                if (_pasteboardPositions.ContainsKey(path))
-                    continue;
-
-                int column = index % 3;
-                int row = index / 3;
-
-                _pasteboardPositions[path] =
-                    new PointF(
-                        pageWidth + 90f + column * 205f,
-                        50f + row * 175f);
-
-                index++;
-            }
-        }
-
-        private Image GetThumbnail(
-            string path,
-            int maxWidth,
-            int maxHeight)
-        {
-            if (string.IsNullOrWhiteSpace(path) ||
-                !File.Exists(path))
-                return null;
-
-            Image cached;
-            if (_thumbnailCache.TryGetValue(path, out cached))
-                return cached;
-
+            _updatingPageCombo = true;
             try
             {
-                using (Image source = Image.FromFile(path))
+                if (_pageCombo.Items.Count != pages)
                 {
-                    Bitmap bmp =
-                        new Bitmap(
-                            Math.Max(1, maxWidth),
-                            Math.Max(1, maxHeight),
-                            PixelFormat.Format32bppArgb);
+                    _pageCombo.BeginUpdate();
+                    _pageCombo.Items.Clear();
 
-                    using (Graphics g = Graphics.FromImage(bmp))
-                    {
-                        g.Clear(_theme.BgLight);
-                        g.InterpolationMode =
-                            InterpolationMode.HighQualityBicubic;
-                        g.PixelOffsetMode =
-                            PixelOffsetMode.HighQuality;
-                        g.SmoothingMode =
-                            SmoothingMode.HighQuality;
+                    for (int page = 1; page <= pages; page++)
+                        _pageCombo.Items.Add("Page " + page + " of " + pages);
 
-                        Rectangle target =
-                            FitRectangle(
-                                source.Width,
-                                source.Height,
-                                new Rectangle(
-                                    4,
-                                    4,
-                                    bmp.Width - 8,
-                                    bmp.Height - 8));
+                    _pageCombo.EndUpdate();
+                }
 
-                        g.DrawImage(
-                            source,
-                            target);
-                    }
+                if (_pageCombo.SelectedIndex != current)
+                    _pageCombo.SelectedIndex = current;
+            }
+            finally
+            {
+                _updatingPageCombo = false;
+            }
 
-                    _thumbnailCache[path] = bmp;
-                    return bmp;
+            _previousPageButton.Enabled = current > 0;
+            _nextPageButton.Enabled = current < pages - 1;
+            _zoomLabel.Text = Math.Round(_canvas.Zoom * 100f) + "%";
+            _navigator.CurrentPage = current;
+        }
+
+        private void RefreshInspector()
+        {
+            // Identifies what the two text boxes edit; null when nothing is
+            // selected.
+            string key = null;
+            string remarkText = string.Empty;
+            string noteText = string.Empty;
+
+            if (_inspected.Count == 0)
+            {
+                _inspectorName.Text = "No image selected";
+                _inspectorLocation.Text =
+                    "Click an image in the library or on a page.";
+                _placeButton.Enabled = false;
+                _removeButton.Enabled = false;
+            }
+            else if (_inspected.Count == 1)
+            {
+                string path = _inspected[0];
+                int slot = _model.IndexOf(path);
+
+                string location =
+                    slot < 0
+                        ? "Not placed"
+                        : "Page " + ((slot / _model.CellsPerPage) + 1) +
+                          "  •  Cell " + ((slot % _model.CellsPerPage) + 1);
+
+                Size size;
+                if (_thumbnails.TryGetOriginalSize(path, out size))
+                    location += "  •  " + size.Width + " × " + size.Height + " px";
+
+                _inspectorName.Text = Path.GetFileName(path);
+                _inspectorLocation.Text = location;
+                _placeButton.Enabled = slot < 0;
+                _removeButton.Enabled = slot >= 0;
+
+                key = path;
+                remarkText = _model.GetEffectiveRemark(path);
+                noteText = _model.GetNote(path) ?? string.Empty;
+            }
+            else
+            {
+                int placed = _inspected.Count(_model.IsPlaced);
+
+                _inspectorName.Text = _inspected.Count + " images selected";
+                _inspectorLocation.Text =
+                    placed + " placed  •  " +
+                    (_inspected.Count - placed) + " not placed";
+                _placeButton.Enabled = placed < _inspected.Count;
+                _removeButton.Enabled = placed > 0;
+
+                // The same text can be given to all of them at once. Each
+                // box shows the text they already share, or nothing when
+                // they differ.
+                key = string.Join("|", _inspected);
+                remarkText = SharedText(_inspected, _model.GetEffectiveRemark);
+                noteText = SharedText(_inspected, p => _model.GetNote(p) ?? string.Empty);
+            }
+
+            // Only highlighted while it can be used.
+            StyleButton(_placeButton, _placeButton.Enabled);
+
+            bool sameSelection =
+                key != null &&
+                string.Equals(
+                    key,
+                    _remarkBoxKey,
+                    StringComparison.OrdinalIgnoreCase);
+
+            _updatingRemark = true;
+            try
+            {
+                _remarkBoxKey = key;
+                _editTargets.Clear();
+                _editTargets.AddRange(_inspected);
+
+                ShowInspectorText(_remarkBox, remarkText, key != null, sameSelection);
+                ShowInspectorText(_noteBox, noteText, key != null, sameSelection);
+            }
+            finally
+            {
+                _updatingRemark = false;
+            }
+
+            bool several = _editTargets.Count > 1;
+
+            CollageWorkspaceUi.SetCueBanner(
+                _remarkBox,
+                several
+                    ? "Type, then Enter: same for all " + _editTargets.Count
+                    : string.Empty);
+
+            CollageWorkspaceUi.SetCueBanner(
+                _noteBox,
+                several
+                    ? "Type, then Enter: same for all " + _editTargets.Count
+                    : _editTargets.Count == 1
+                        ? "Additional remark (optional)"
+                        : string.Empty);
+
+            _remarkResetButton.Enabled =
+                _editTargets.Any(p => _model.GetRemark(p) != null);
+        }
+
+        private static string SharedText(
+            IList<string> paths,
+            Func<string, string> getText)
+        {
+            string first = getText(paths[0]);
+
+            return paths.All(
+                p => string.Equals(getText(p), first, StringComparison.Ordinal))
+                ? first
+                : string.Empty;
+        }
+
+        private static void ShowInspectorText(
+            TextBox box,
+            string text,
+            bool enabled,
+            bool sameImage)
+        {
+            // Never rewrite a box while the user is typing in it.
+            if (box.Focused && sameImage)
+                return;
+
+            box.Enabled = enabled;
+
+            if (box.Text != text)
+                box.Text = text;
+        }
+
+        private void RefreshStatus()
+        {
+            int unplaced = _model.UnplacedCount;
+            int total = _model.Images.Count;
+
+            _summaryLabel.Text =
+                total + (total == 1 ? " image" : " images") + "  •  " +
+                _model.PlacedCount + " placed  •  " +
+                unplaced + " not placed  •  " +
+                _model.PageCount + (_model.PageCount == 1 ? " page" : " pages");
+
+            if (unplaced == 0)
+            {
+                _statusLabel.ForeColor = _theme.TextColor;
+                _statusLabel.Text =
+                    total == 1
+                        ? "The image is on a page."
+                        : "All " + total + " images are on a page.";
+            }
+            else
+            {
+                _statusLabel.ForeColor =
+                    CollageWorkspaceUi.WarningColor(_theme.ContentBg);
+                _statusLabel.Text =
+                    unplaced +
+                    (unplaced == 1 ? " image is" : " images are") +
+                    " not placed and will be left out of the PDF.";
+            }
+        }
+
+        private void RefreshUndoButtons()
+        {
+            _undoButton.Enabled = _undo.Count > 0;
+            _redoButton.Enabled = _redo.Count > 0;
+        }
+
+        private void Thumbnails_Ready(object sender, EventArgs e)
+        {
+            _library.Invalidate();
+            _canvas.Invalidate();
+            _navigator.Invalidate();
+
+            // The pixel size of the selected image may have just arrived.
+            if (_inspected.Count == 1)
+                RefreshInspector();
+        }
+
+        // ------------------------------------------------------------
+        // Selection
+        // ------------------------------------------------------------
+        private void SetInspected(IEnumerable<string> paths)
+        {
+            _inspected.Clear();
+            _inspectedSet.Clear();
+
+            foreach (string path in paths)
+            {
+                if (path != null && _inspectedSet.Add(path))
+                    _inspected.Add(path);
+            }
+
+            RefreshInspector();
+            _navigator.Invalidate();
+        }
+
+        private void Library_SelectionChanged(object sender, EventArgs e)
+        {
+            IList<string> selected = _library.SelectedPaths;
+
+            if (selected.Count == 1)
+            {
+                int slot = _model.IndexOf(selected[0]);
+
+                // Highlight it on its page without scrolling there; an
+                // empty cell chosen as the drop target stays selected.
+                if (slot >= 0)
+                    _canvas.SelectSlot(slot, false);
+                else if (_canvas.SelectedPath != null)
+                    _canvas.SelectSlot(-1, false);
+            }
+
+            SetInspected(selected);
+        }
+
+        private void Canvas_SelectionChanged(object sender, EventArgs e)
+        {
+            string path = _canvas.SelectedPath;
+
+            if (path == null)
+                return;
+
+            if (_library.Contains(path))
+                _library.SelectSingle(path, true);
+            else
+                _library.ClearSelection();
+
+            SetInspected(new[] { path });
+        }
+
+        private void SetFilter(LibraryFilter filter)
+        {
+            if (_filter == filter)
+                return;
+
+            _filter = filter;
+            RefreshLibrary();
+        }
+
+        private void SetLibrarySize(int level)
+        {
+            _library.SizeLevel = level;
+
+            for (int i = 0; i < _sizeButtons.Length; i++)
+                StyleButton(_sizeButtons[i], level == i + 1);
+        }
+
+        // ------------------------------------------------------------
+        // Actions
+        // ------------------------------------------------------------
+        private void DropImages(string[] paths, int slot, bool insert)
+        {
+            if (paths == null || paths.Length == 0)
+                return;
+
+            if (paths.Length == 1 && _model.IndexOf(paths[0]) == slot)
+                return;
+
+            PushUndo();
+
+            int placedAt = _model.Place(paths, slot, insert);
+            if (placedAt < 0)
+                return;
+
+            string first = _model.GetSlot(placedAt);
+
+            _canvas.SelectSlot(placedAt, false);
+
+            if (_library.Contains(first))
+                _library.SelectSingle(first, false);
+
+            SetInspected(new[] { first });
+        }
+
+        private void UnplaceImages(IList<string> paths)
+        {
+            if (paths == null || !paths.Any(_model.IsPlaced))
+                return;
+
+            PushUndo();
+            _model.Unplace(paths);
+        }
+
+        private void PlaceInNextEmpty(IList<string> paths)
+        {
+            List<string> unplaced =
+                paths
+                    .Where(p => !_model.IsPlaced(p))
+                    .ToList();
+
+            if (unplaced.Count == 0)
+                return;
+
+            // Start at the empty cell selected on the page, otherwise at
+            // the page being looked at.
+            int selected = _canvas.SelectedSlot;
+
+            int start =
+                selected >= 0 && _model.GetSlot(selected) == null
+                    ? selected
+                    : _canvas.CurrentPage * _model.CellsPerPage;
+
+            PushUndo();
+
+            int slot = _model.PlaceInNextEmpty(unplaced, start);
+            if (slot < 0)
+                return;
+
+            _canvas.SelectSlot(slot, true);
+            SetInspected(new[] { unplaced[0] });
+        }
+
+        private void ActivateLibraryItem(string path)
+        {
+            if (_model.IsPlaced(path))
+            {
+                ShowOnPage(path);
+                return;
+            }
+
+            IList<string> selected = _library.SelectedPaths;
+
+            PlaceInNextEmpty(
+                selected.Contains(path, StringComparer.OrdinalIgnoreCase)
+                    ? selected
+                    : new[] { path });
+        }
+
+        private void ShowOnPage(string path)
+        {
+            int slot = _model.IndexOf(path);
+            if (slot < 0)
+                return;
+
+            _canvas.SelectSlot(slot, true);
+            SetInspected(new[] { path });
+        }
+
+        private void AddPage()
+        {
+            PushUndo();
+            _canvas.ScrollToPage(_model.AddPage());
+        }
+
+        // ------------------------------------------------------------
+        // Adding and removing images
+        // ------------------------------------------------------------
+        private void AddImagesFromDialog()
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog
+            {
+                Multiselect = true,
+                Title = "Add images to this collage",
+                Filter = "Image Files|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff"
+            })
+            {
+                if (DialogMemoryManager.ShowOpenDialog(
+                    dialog,
+                    "Collage.SourceFiles") == DialogResult.OK)
+                {
+                    AddImages(dialog.FileNames, -1, false);
                 }
             }
-            catch
+        }
+
+        // Adds image files (or the images inside dropped folders) to the
+        // collage. With a cell given they are placed there straight away;
+        // otherwise they wait in the library as not placed.
+        private void AddImages(string[] files, int slot, bool insert)
+        {
+            List<string> usable =
+                ExpandFolders(files)
+                    .Where(ImageCollageEngine.IsSupportedImageFile)
+                    .Where(File.Exists)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+            if (usable.Count == 0)
             {
-                return null;
+                MessageBox.Show(
+                    this,
+                    "No image files that can be used were found.\n\n" +
+                    "Supported types: PNG, JPG, BMP, TIF.",
+                    "Add Images",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
             }
-        }
 
-        private static Rectangle FitRectangle(
-            int sourceWidth,
-            int sourceHeight,
-            Rectangle bounds)
-        {
-            if (sourceWidth <= 0 || sourceHeight <= 0)
-                return bounds;
+            List<string> fresh =
+                usable
+                    .Where(p => !_model.Contains(p))
+                    .ToList();
 
-            float scale =
-                Math.Min(
-                    bounds.Width / (float)sourceWidth,
-                    bounds.Height / (float)sourceHeight);
+            if (fresh.Count > 0 || slot >= 0)
+                PushUndo();
 
-            int width =
-                Math.Max(
-                    1,
-                    (int)Math.Round(sourceWidth * scale));
-
-            int height =
-                Math.Max(
-                    1,
-                    (int)Math.Round(sourceHeight * scale));
-
-            return new Rectangle(
-                bounds.X + (bounds.Width - width) / 2,
-                bounds.Y + (bounds.Height - height) / 2,
-                width,
-                height);
-        }
-
-        private ArrangementSnapshot CaptureSnapshot()
-        {
-            return new ArrangementSnapshot
+            if (fresh.Count > 0)
             {
-                Slots = new List<string>(_slots),
-                Positions =
-                    new Dictionary<string, PointF>(
-                        _pasteboardPositions,
-                        StringComparer.OrdinalIgnoreCase)
+                _model.AddImages(fresh);
+                _thumbnails.Preload(fresh);
+            }
+
+            if (slot >= 0)
+            {
+                int placedAt = _model.Place(usable, slot, insert);
+
+                if (placedAt >= 0)
+                {
+                    _canvas.SelectSlot(placedAt, false);
+                    SetInspected(new[] { _model.GetSlot(placedAt) });
+                }
+
+                return;
+            }
+
+            // Show the images that were asked for, including any that were
+            // already in the collage.
+            if (!usable.All(_library.Contains))
+            {
+                _searchBox.Clear();
+                SetFilter(
+                    usable.Any(_model.IsPlaced)
+                        ? LibraryFilter.All
+                        : LibraryFilter.Unplaced);
+            }
+
+            _library.SelectMany(usable);
+            _library.Focus();
+            SetInspected(usable);
+        }
+
+        private static IEnumerable<string> ExpandFolders(IEnumerable<string> paths)
+        {
+            List<string> result = new List<string>();
+
+            if (paths == null)
+                return result;
+
+            foreach (string path in paths)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    continue;
+
+                if (!Directory.Exists(path))
+                {
+                    result.Add(path);
+                    continue;
+                }
+
+                try
+                {
+                    result.AddRange(Directory.GetFiles(path));
+                }
+                catch
+                {
+                    // A folder that cannot be read is skipped.
+                }
+            }
+
+            return result;
+        }
+
+        // Takes images out of the collage altogether. Unlike "take off the
+        // page", they no longer count as not placed.
+        private void RemoveImages(IList<string> paths)
+        {
+            if (paths == null || paths.Count == 0)
+                return;
+
+            PushUndo();
+            _model.RemoveImages(paths);
+            SetInspected(new string[0]);
+        }
+
+        // ------------------------------------------------------------
+        // Saving the layout
+        // ------------------------------------------------------------
+        private CollageLayout BuildLayout()
+        {
+            return new CollageLayout
+            {
+                Page = _page.Clone(),
+                DisplayMode = ResultDisplayMode,
+                Images = new List<string>(_model.Images),
+                Slots = _model.BuildResultSlots(),
+                Remarks = _model.BuildResultRemarks(),
+                Notes = _model.BuildResultNotes()
             };
         }
 
-        private void PushUndoSnapshot()
+        // Saves the arrangement as it is now, so it can be imported later
+        // from the Image Collage Builder without creating a PDF first.
+        private void SaveLayoutToFile()
         {
-            _undo.Push(CaptureSnapshot());
-            _redo.Clear();
-            UpdateUndoButtons();
+            using (SaveFileDialog dialog = new SaveFileDialog
+            {
+                Title = "Save collage layout",
+                Filter =
+                    "NPPL collage layout|*" + CollageLayoutFile.Extension,
+                DefaultExt = CollageLayoutFile.Extension.TrimStart('.'),
+                FileName =
+                    "CollageLayout_" +
+                    DateTime.Now.ToString("yyyyMMdd_HHmm")
+            })
+            {
+                if (DialogMemoryManager.ShowSaveDialog(
+                    dialog,
+                    "Collage.SaveLayout") != DialogResult.OK)
+                    return;
+
+                try
+                {
+                    CollageLayoutFile.Save(BuildLayout(), dialog.FileName);
+
+                    MessageBox.Show(
+                        this,
+                        "Layout saved.\n\n" +
+                        dialog.FileName + "\n\n" +
+                        "Use \"Import Layout\" in the Image Collage Builder " +
+                        "to open it again.",
+                        "Save Layout",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        this,
+                        "The layout could not be saved.\n\n" + ex.Message,
+                        "Save Layout",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+            }
         }
 
-        private void RestoreSnapshot(ArrangementSnapshot snapshot)
+        private void ClearPage(int page)
         {
-            if (snapshot == null)
+            if (page < 0 ||
+                page >= _model.PageCount ||
+                _model.CountOnPage(page) == 0)
                 return;
 
-            _slots.Clear();
-            _slots.AddRange(snapshot.Slots);
+            PushUndo();
+            _model.ClearPage(page);
+        }
 
-            _pasteboardPositions.Clear();
-            foreach (KeyValuePair<string, PointF> pair in snapshot.Positions)
-                _pasteboardPositions[pair.Key] = pair.Value;
+        // ------------------------------------------------------------
+        // Remarks
+        // ------------------------------------------------------------
+        // With one image selected the page follows the typing. With
+        // several selected the text is applied to all of them when the box
+        // is left or Enter is pressed (see CommitBulkText), so a stray
+        // keystroke cannot overwrite a whole selection.
+        private void RemarkBox_TextChanged(object sender, EventArgs e)
+        {
+            if (_updatingRemark || _editTargets.Count != 1)
+                return;
 
-            RebuildUnplacedSet();
-            InitializePasteboardPositions();
-            RefreshAll();
+            string path = _editTargets[0];
+
+            if (string.Equals(
+                _remarkBox.Text.Trim(),
+                _model.GetEffectiveRemark(path),
+                StringComparison.Ordinal))
+                return;
+
+            // One undo step for the whole edit, not one per keystroke.
+            if (!_remarkUndoPushed)
+            {
+                PushUndo();
+                _remarkUndoPushed = true;
+            }
+
+            _model.SetRemark(path, _remarkBox.Text);
+            ShowRemarksIfHidden();
+        }
+
+        private void NoteBox_TextChanged(object sender, EventArgs e)
+        {
+            if (_updatingRemark || _editTargets.Count != 1)
+                return;
+
+            string path = _editTargets[0];
+
+            if (string.Equals(
+                _noteBox.Text.Trim(),
+                _model.GetNote(path) ?? string.Empty,
+                StringComparison.Ordinal))
+                return;
+
+            if (!_remarkUndoPushed)
+            {
+                PushUndo();
+                _remarkUndoPushed = true;
+            }
+
+            _model.SetNote(path, _noteBox.Text);
+            ShowRemarksIfHidden();
+        }
+
+        // Gives the text typed in one of the inspector boxes to every
+        // selected image, as a single undo step.
+        private void CommitBulkText(TextBox box)
+        {
+            if (_updatingRemark || _editTargets.Count < 2 || !box.Modified)
+                return;
+
+            box.Modified = false;
+            ApplyTextToImages(_editTargets.ToList(), box == _noteBox, box.Text);
+        }
+
+        private int ApplyTextToImages(IList<string> paths, bool note, string text)
+        {
+            string value = (text ?? string.Empty).Trim();
+
+            List<string> changing =
+                paths
+                    .Where(
+                        p => !string.Equals(
+                            value,
+                            note
+                                ? _model.GetNote(p) ?? string.Empty
+                                : value.Length == 0
+                                    ? _model.GetRemark(p) ?? string.Empty
+                                    : _model.GetEffectiveRemark(p),
+                            StringComparison.Ordinal))
+                    .ToList();
+
+            if (changing.Count == 0)
+                return 0;
+
+            PushUndo();
+            _model.BeginUpdate();
+
+            try
+            {
+                foreach (string path in changing)
+                {
+                    if (note)
+                        _model.SetNote(path, value);
+                    else
+                        _model.SetRemark(path, value);
+                }
+            }
+            finally
+            {
+                _model.EndUpdate();
+            }
+
+            if (value.Length > 0)
+                ShowRemarksIfHidden();
+
+            return changing.Count;
+        }
+
+        // Text typed directly on the page: the remark, or the additional
+        // remark on the line below it.
+        private void ApplyEditedText(string path, bool note, string text)
+        {
+            string value = (text ?? string.Empty).Trim();
+
+            string current =
+                note
+                    ? _model.GetNote(path) ?? string.Empty
+                    : _model.GetEffectiveRemark(path);
+
+            if (string.Equals(value, current, StringComparison.Ordinal))
+                return;
+
+            PushUndo();
+
+            if (note)
+                _model.SetNote(path, value);
+            else
+                _model.SetRemark(path, value);
+
+            ShowRemarksIfHidden();
+        }
+
+        // Back to the file name, for every selected image.
+        private void ResetRemark()
+        {
+            ApplyTextToImages(_editTargets.ToList(), false, string.Empty);
+        }
+
+        // ------------------------------------------------------------
+        // Remarks from and to a sheet
+        // ------------------------------------------------------------
+        private void ExportRemarksWithDialog()
+        {
+            using (SaveFileDialog dialog = new SaveFileDialog
+            {
+                Title = "Export remarks to Excel",
+                Filter = "Excel workbook|*.xlsx",
+                DefaultExt = "xlsx",
+                FileName = "CollageRemarks_" + DateTime.Now.ToString("yyyyMMdd_HHmm")
+            })
+            {
+                if (DialogMemoryManager.ShowSaveDialog(
+                    dialog,
+                    "Collage.RemarkSheet") != DialogResult.OK)
+                    return;
+
+                try
+                {
+                    int count = ExportRemarksTo(dialog.FileName);
+
+                    MessageBox.Show(
+                        this,
+                        count + " image(s) written to\n" + dialog.FileName + "\n\n" +
+                        "Type the remarks in columns B and C, save the workbook, " +
+                        "then use \"Import remarks from Excel\".",
+                        "Export Remarks",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        this,
+                        "The remarks could not be exported.\n\n" + ex.Message,
+                        "Export Remarks",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private int ExportRemarksTo(string path)
+        {
+            List<CollageRemarkRow> rows = new List<CollageRemarkRow>();
+
+            foreach (string image in _imagesByName)
+            {
+                int slot = _model.IndexOf(image);
+
+                rows.Add(
+                    new CollageRemarkRow
+                    {
+                        FileName = Path.GetFileName(image),
+                        Remark = _model.GetRemark(image) ?? string.Empty,
+                        Remark2 = _model.GetNote(image) ?? string.Empty,
+                        Location =
+                            slot < 0
+                                ? "Not placed"
+                                : "Page " + ((slot / _model.CellsPerPage) + 1) +
+                                  ", cell " + ((slot % _model.CellsPerPage) + 1)
+                    });
+            }
+
+            CollageRemarkSheet.Write(path, rows);
+            return rows.Count;
+        }
+
+        private void ImportRemarksWithDialog()
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog
+            {
+                Title = "Import remarks",
+                Filter = CollageRemarkSheet.OpenFilter
+            })
+            {
+                if (DialogMemoryManager.ShowOpenDialog(
+                    dialog,
+                    "Collage.RemarkSheet") != DialogResult.OK)
+                    return;
+
+                try
+                {
+                    MessageBox.Show(
+                        this,
+                        ImportRemarksFrom(dialog.FileName),
+                        "Import Remarks",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        this,
+                        "The sheet could not be read.\n\n" + ex.Message + "\n\n" +
+                        "Column A must hold the image file name, column B the " +
+                        "remark and column C the additional remark.",
+                        "Import Remarks",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        // Applies the remarks of a sheet to the images named in it and
+        // returns a short report. Rows are matched by file name, with or
+        // without the extension. An empty cell leaves that text as it is.
+        private string ImportRemarksFrom(string path)
+        {
+            List<CollageRemarkRow> rows = CollageRemarkSheet.Read(path);
+
+            Dictionary<string, List<string>> byName =
+                new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string image in _model.Images)
+            {
+                foreach (string name in new[]
+                {
+                    Path.GetFileName(image),
+                    CollageArrangementModel.GetFileTitle(image)
+                })
+                {
+                    List<string> matches;
+
+                    if (!byName.TryGetValue(name, out matches))
+                        byName[name] = matches = new List<string>();
+
+                    if (!matches.Contains(image))
+                        matches.Add(image);
+                }
+            }
+
+            List<string> unmatched = new List<string>();
+            List<Action> changes = new List<Action>();
+            HashSet<string> touched =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (CollageRemarkRow row in rows)
+            {
+                List<string> matches;
+
+                if (!byName.TryGetValue(row.FileName, out matches))
+                {
+                    unmatched.Add(row.FileName);
+                    continue;
+                }
+
+                foreach (string image in matches)
+                {
+                    string target = image;
+                    string remark = row.Remark;
+                    string remark2 = row.Remark2;
+
+                    if (remark.Length > 0 &&
+                        !string.Equals(
+                            remark,
+                            _model.GetEffectiveRemark(target),
+                            StringComparison.Ordinal))
+                    {
+                        changes.Add(() => _model.SetRemark(target, remark));
+                        touched.Add(target);
+                    }
+
+                    if (remark2.Length > 0 &&
+                        !string.Equals(
+                            remark2,
+                            _model.GetNote(target) ?? string.Empty,
+                            StringComparison.Ordinal))
+                    {
+                        changes.Add(() => _model.SetNote(target, remark2));
+                        touched.Add(target);
+                    }
+                }
+            }
+
+            if (changes.Count > 0)
+            {
+                PushUndo();
+                _model.BeginUpdate();
+
+                try
+                {
+                    foreach (Action change in changes)
+                        change();
+                }
+                finally
+                {
+                    _model.EndUpdate();
+                }
+
+                ShowRemarksIfHidden();
+            }
+
+            string report =
+                rows.Count + " row(s) read.  " +
+                touched.Count + " image(s) updated.";
+
+            if (unmatched.Count > 0)
+            {
+                report +=
+                    "\n\n" + unmatched.Count +
+                    " name(s) in the sheet did not match any image, for example:\n   " +
+                    string.Join("\n   ", unmatched.Take(5));
+            }
+
+            return report;
+        }
+
+        // A remark that was just typed should be visible straight away.
+        private void ShowRemarksIfHidden()
+        {
+            if (ResultDisplayMode == CollageCellLayout.ModeFilename)
+                _displayModeCombo.SelectedIndex = 1;
+        }
+
+        // ------------------------------------------------------------
+        // Undo
+        // ------------------------------------------------------------
+        private void PushUndo()
+        {
+            _undo.Add(_model.Capture());
+
+            if (_undo.Count > MaxUndoSteps)
+                _undo.RemoveAt(0);
+
+            _redo.Clear();
+            _dirty = true;
+            RefreshUndoButtons();
         }
 
         private void Undo()
@@ -1309,8 +2549,11 @@ namespace NPPLPrintMaster
             if (_undo.Count == 0)
                 return;
 
-            _redo.Push(CaptureSnapshot());
-            RestoreSnapshot(_undo.Pop());
+            CollageArrangementSnapshot snapshot = _undo[_undo.Count - 1];
+            _undo.RemoveAt(_undo.Count - 1);
+
+            _redo.Add(_model.Capture());
+            _model.Restore(snapshot);
         }
 
         private void Redo()
@@ -1318,1840 +2561,130 @@ namespace NPPLPrintMaster
             if (_redo.Count == 0)
                 return;
 
-            _undo.Push(CaptureSnapshot());
-            RestoreSnapshot(_redo.Pop());
+            CollageArrangementSnapshot snapshot = _redo[_redo.Count - 1];
+            _redo.RemoveAt(_redo.Count - 1);
+
+            _undo.Add(_model.Capture());
+            _model.Restore(snapshot);
         }
 
-        private void UpdateUndoButtons()
+        // ------------------------------------------------------------
+        // Keyboard, accept and close
+        // ------------------------------------------------------------
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (_undoButton != null)
-                _undoButton.Enabled = _undo.Count > 0;
+            bool typing = ActiveControl is TextBoxBase;
 
-            if (_redoButton != null)
-                _redoButton.Enabled = _redo.Count > 0;
+            if (keyData == (Keys.Control | Keys.F))
+            {
+                _searchBox.Focus();
+                _searchBox.SelectAll();
+                return true;
+            }
+
+            if (typing)
+            {
+                if (keyData == Keys.Escape &&
+                    ActiveControl == _searchBox &&
+                    _searchBox.TextLength > 0)
+                {
+                    _searchBox.Clear();
+                    return true;
+                }
+
+                // Letters, Ctrl+Z and the rest belong to the text box.
+                return base.ProcessCmdKey(ref msg, keyData);
+            }
+
+            switch (keyData)
+            {
+                case Keys.Control | Keys.Z:
+                    Undo();
+                    return true;
+                case Keys.Control | Keys.Y:
+                case Keys.Control | Keys.Shift | Keys.Z:
+                    Redo();
+                    return true;
+                case Keys.Control | Keys.D0:
+                case Keys.Control | Keys.NumPad0:
+                    _canvas.FitPage();
+                    return true;
+                case Keys.Control | Keys.Oemplus:
+                case Keys.Control | Keys.Add:
+                    _canvas.ZoomBy(1.2f);
+                    return true;
+                case Keys.Control | Keys.OemMinus:
+                case Keys.Control | Keys.Subtract:
+                    _canvas.ZoomBy(1f / 1.2f);
+                    return true;
+            }
+
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void AcceptArrangement()
+        {
+            if (_model.PlacedCount == 0)
+            {
+                MessageBox.Show(
+                    this,
+                    "There are no images on any page.\n\n" +
+                    "Place at least one image before using this arrangement.",
+                    "Arrange Images",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            ResultSlots = _model.BuildResultSlots();
+            ResultCaptions = _model.BuildResultRemarks();
+
+            // Kept identical to the captions: the PDF generator reads the
+            // custom name first.
+            ResultCustomNames = _model.BuildResultRemarks();
+            ResultNotes = _model.BuildResultNotes();
+            ResultImages = new List<string>(_model.Images);
+            ResultPage = _page.Clone();
+
+            _accepted = true;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+
+            if (e.Cancel || _accepted || !_dirty)
+                return;
+
+            DialogResult answer =
+                MessageBox.Show(
+                    this,
+                    "Discard the changes made to this arrangement?",
+                    "Arrange Images",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2);
+
+            if (answer != DialogResult.Yes)
+                e.Cancel = true;
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                foreach (Image image in _thumbnailCache.Values)
-                {
-                    try { image.Dispose(); }
-                    catch { }
-                }
+                _thumbnails.Dispose();
 
-                _thumbnailCache.Clear();
+                if (_toolTip != null)
+                    _toolTip.Dispose();
+
+                if (_arrangeMenu != null)
+                    _arrangeMenu.Dispose();
             }
 
             base.Dispose(disposing);
-        }
-
-        private sealed class ArrangementSnapshot
-        {
-            public List<string> Slots;
-            public Dictionary<string, PointF> Positions;
-        }
-
-        /// <summary>
-        /// Lightweight custom-rendered infinite workspace. It intentionally
-        /// does not create a WinForms control for every image/cell, which keeps
-        /// zooming and panning responsive with large image sets.
-        /// </summary>
-        private sealed class CollageDesignCanvas : Control
-        {
-            private readonly ThemeColors _theme;
-            private readonly string _fontFamily;
-            private readonly int _gridSize;
-            private readonly bool _landscape;
-            private readonly List<string> _slots;
-            private readonly HashSet<string> _unplaced;
-            private readonly Dictionary<string, PointF> _positions;
-            private readonly Dictionary<string, string> _captions;
-            private readonly Dictionary<string, string> _customNames;
-            private readonly List<string> _allImages;
-            private readonly Func<string, int, int, Image> _thumbnailProvider;
-            private readonly int _totalPages;
-            private const float PageGap = 0f;
-
-            private float _zoom = 0.72f;
-            private string _displayMode = "Both";
-            private PointF _viewCenter;
-            private bool _viewInitialized;
-
-            private bool _panning;
-            private Point _panStartScreen;
-            private PointF _panStartCenter;
-            private bool _spaceDown;
-
-            private bool _dragging;
-            private bool _dragMoved;
-            private string _dragPath;
-            private int _dragSourceSlot = -1;
-            private PointF _dragOffset;
-            private PointF _dragCurrentWorld;
-
-            private string _selectedPath;
-            private TextBox _inlineCaptionEditor;
-            private string _inlineCaptionPath;
-            private TextBox _inlineCustomNameEditor;
-            private string _inlineCustomNamePath;
-
-            public int CurrentPage { get; set; }
-
-            public float Zoom
-            {
-                get { return _zoom; }
-            }
-
-            public event Action<string> ImageSelected;
-            public event EventHandler LayoutChanged;
-            public event EventHandler SnapshotRequested;
-
-            public CollageDesignCanvas(
-                ThemeColors theme,
-                string fontFamily,
-                int gridSize,
-                bool landscape,
-                List<string> slots,
-                HashSet<string> unplaced,
-                Dictionary<string, PointF> positions,
-                Dictionary<string, string> captions,
-                Dictionary<string, string> customNames,
-                List<string> allImages,
-                Func<string, int, int, Image> thumbnailProvider,
-                int totalPages)
-            {
-                _theme = theme;
-                _fontFamily = fontFamily;
-                _gridSize = gridSize;
-                _landscape = landscape;
-                _slots = slots;
-                _unplaced = unplaced;
-                _positions = positions;
-                _captions = captions;
-                _customNames = customNames;
-                _allImages = allImages;
-                _thumbnailProvider = thumbnailProvider;
-                _totalPages = Math.Max(1, totalPages);
-
-                DoubleBuffered = true;
-                ResizeRedraw = true;
-                BackColor = theme.BgLight;
-                TabStop = true;
-                AllowDrop = true;
-
-                MouseWheel += Canvas_MouseWheel;
-                MouseDown += Canvas_MouseDown;
-                MouseMove += Canvas_MouseMove;
-                MouseUp += Canvas_MouseUp;
-                DragEnter += Canvas_DragEnter;
-                DragDrop += Canvas_DragDrop;
-            }
-
-            protected override void OnKeyDown(KeyEventArgs e)
-            {
-                if (e.KeyCode == Keys.Space)
-                {
-                    _spaceDown = true;
-                    e.SuppressKeyPress = true;
-                }
-
-                base.OnKeyDown(e);
-            }
-
-            protected override void OnKeyUp(KeyEventArgs e)
-            {
-                if (e.KeyCode == Keys.Space)
-                    _spaceDown = false;
-
-                base.OnKeyUp(e);
-            }
-
-            public void SelectImage(string path)
-            {
-                _selectedPath = path;
-                Invalidate();
-            }
-
-            public void SetDisplayMode(string mode)
-            {
-                _displayMode = string.IsNullOrWhiteSpace(mode)
-                    ? "Both"
-                    : mode;
-                Invalidate();
-            }
-
-            public void FitPage()
-            {
-                Rectangle client = ClientRectangle;
-                if (client.Width <= 0 || client.Height <= 0)
-                    return;
-
-                SizeF page = PageSizeWorld();
-
-                float zx =
-                    (client.Width - 120f) / page.Width;
-                float zy =
-                    (client.Height - 120f) / page.Height;
-
-                _zoom =
-                    Math.Max(
-                        0.25f,
-                        Math.Min(
-                            1.35f,
-                            Math.Min(zx, zy)));
-
-                RectangleF firstPage = PageRectWorld(0);
-                _viewCenter =
-                    new PointF(
-                        firstPage.Left + firstPage.Width / 2f,
-                        firstPage.Top + firstPage.Height / 2f);
-
-                _viewInitialized = true;
-                Invalidate();
-            }
-
-            public void ZoomAt(Point screenPoint, float factor)
-            {
-                EnsureView();
-
-                PointF before =
-                    ScreenToWorld(screenPoint);
-
-                _zoom =
-                    Math.Max(
-                        0.20f,
-                        Math.Min(
-                            3.50f,
-                            _zoom * factor));
-
-                PointF after =
-                    ScreenToWorld(screenPoint);
-
-                _viewCenter =
-                    new PointF(
-                        _viewCenter.X + before.X - after.X,
-                        _viewCenter.Y + before.Y - after.Y);
-
-                Invalidate();
-            }
-
-            private void EnsureView()
-            {
-                if (!_viewInitialized)
-                    FitPage();
-            }
-
-            private SizeF PageSizeWorld()
-            {
-                return _landscape
-                    ? new SizeF(1122f, 794f)
-                    : new SizeF(794f, 1122f);
-            }
-
-            private RectangleF PageRectWorld(int pageIndex)
-            {
-                SizeF size = PageSizeWorld();
-                float top = pageIndex * (size.Height + PageGap);
-                return new RectangleF(
-                    0f,
-                    top,
-                    size.Width,
-                    size.Height);
-            }
-
-            private RectangleF PageRectWorld()
-            {
-                return PageRectWorld(0);
-            }
-
-            private PointF WorldToScreen(PointF world)
-            {
-                EnsureView();
-
-                return new PointF(
-                    ClientSize.Width / 2f +
-                    (world.X - _viewCenter.X) * _zoom,
-                    ClientSize.Height / 2f +
-                    (world.Y - _viewCenter.Y) * _zoom);
-            }
-
-            private PointF ScreenToWorld(Point screen)
-            {
-                EnsureView();
-
-                return new PointF(
-                    _viewCenter.X +
-                    (screen.X - ClientSize.Width / 2f) / _zoom,
-                    _viewCenter.Y +
-                    (screen.Y - ClientSize.Height / 2f) / _zoom);
-            }
-
-            private RectangleF WorldToScreen(RectangleF rect)
-            {
-                PointF a = WorldToScreen(
-                    new PointF(rect.Left, rect.Top));
-                PointF b = WorldToScreen(
-                    new PointF(rect.Right, rect.Bottom));
-
-                return RectangleF.FromLTRB(
-                    a.X,
-                    a.Y,
-                    b.X,
-                    b.Y);
-            }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                base.OnPaint(e);
-                EnsureView();
-
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.HighQuality;
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-                DrawPasteboard(g);
-                DrawPage(g);
-                DrawPasteboardImages(g);
-                DrawDraggedImage(g);
-                DrawSelectionHint(g);
-            }
-
-            private void DrawPasteboard(Graphics g)
-            {
-                g.Clear(_theme.BgLight);
-
-                RectangleF pageScreen =
-                    WorldToScreen(PageRectWorld());
-
-                Rectangle visible =
-                    ClientRectangle;
-
-                using (Brush brush =
-                    new SolidBrush(_theme.ContentBg))
-                {
-                    // A subtle design-space field.
-                    g.FillRectangle(brush, visible);
-                }
-
-                using (Pen pen =
-                    new Pen(
-                        _theme.BorderColor,
-                        1f))
-                {
-                    float step = 60f * _zoom;
-                    if (step >= 22f)
-                    {
-                        PointF origin =
-                            WorldToScreen(
-                                new PointF(
-                                    0f,
-                                    0f));
-
-                        for (float x = origin.X % step;
-                             x < ClientSize.Width;
-                             x += step)
-                        {
-                            g.DrawLine(
-                                pen,
-                                x,
-                                0,
-                                x,
-                                ClientSize.Height);
-                        }
-
-                        for (float y = origin.Y % step;
-                             y < ClientSize.Height;
-                             y += step)
-                        {
-                            g.DrawLine(
-                                pen,
-                                0,
-                                y,
-                                ClientSize.Width,
-                                y);
-                        }
-                    }
-                }
-
-                using (Brush brush =
-                    new SolidBrush(
-                        Color.FromArgb(
-                            95,
-                            _theme.MutedTextColor)))
-                using (Font font =
-                    new Font(
-                        _fontFamily,
-                        8f,
-                        FontStyle.Regular))
-                {
-                    g.DrawString(
-                        "DESIGN SPACE  •  OUTSIDE PAGE = NOT INCLUDED IN PDF",
-                        font,
-                        brush,
-                        new PointF(14f, 12f));
-                }
-            }
-
-            private void DrawPage(Graphics g)
-            {
-                int cells = _gridSize * _gridSize;
-                SizeF pageSize = PageSizeWorld();
-
-                for (int pageIndex = 0; pageIndex < _totalPages; pageIndex++)
-                {
-                    RectangleF pageWorld = PageRectWorld(pageIndex);
-                    RectangleF pageScreen = WorldToScreen(pageWorld);
-
-                    // Keep the A4 reference visible without introducing a
-                    // navigational page break. Pages remain one continuous
-                    // vertical design surface.
-                    RectangleF shadowRect =
-                        new RectangleF(
-                            pageScreen.X + 5f,
-                            pageScreen.Y + 5f,
-                            pageScreen.Width,
-                            pageScreen.Height);
-
-                    using (Brush shadow =
-                        new SolidBrush(Color.FromArgb(45, 0, 0, 0)))
-                    {
-                        g.FillRectangle(shadow, shadowRect);
-                    }
-
-                    using (Brush paper = new SolidBrush(Color.White))
-                        g.FillRectangle(paper, pageScreen);
-
-                    using (Pen pageOutline =
-                        new Pen(_theme.BorderColor, Math.Max(1.2f, 1.5f * _zoom)))
-                    {
-                        g.DrawRectangle(
-                            pageOutline,
-                            pageScreen.X,
-                            pageScreen.Y,
-                            pageScreen.Width,
-                            pageScreen.Height);
-                    }
-
-                    // Reference-only marker: keep it inside the white
-                    // A4 page at its top-left corner. The pages remain a
-                    // continuous vertical workspace with no added page gap.
-                    float labelWidth = Math.Min(
-                        128f,
-                        Math.Max(96f, pageScreen.Width * 0.30f));
-                    float labelHeight = Math.Max(24f, 28f * _zoom);
-                    RectangleF pageLabel =
-                        new RectangleF(
-                            pageScreen.X + 8f,
-                            pageScreen.Y + 8f,
-                            labelWidth,
-                            labelHeight);
-
-                    using (Brush labelBrush =
-                        new SolidBrush(Color.FromArgb(225, 42, 48, 54)))
-                    using (Font labelFont =
-                        new Font(
-                            _fontFamily,
-                            Math.Max(9f, 10f * _zoom),
-                            FontStyle.Bold))
-                    using (StringFormat labelFormat = new StringFormat
-                    {
-                        Alignment = StringAlignment.Center,
-                        LineAlignment = StringAlignment.Center
-                    })
-                    {
-                        g.FillRectangle(labelBrush, pageLabel);
-                        using (Brush labelText =
-                            new SolidBrush(Color.White))
-                        {
-                            g.DrawString(
-                                "PDF PAGE " + (pageIndex + 1),
-                                labelFont,
-                                labelText,
-                                pageLabel,
-                                labelFormat);
-                        }
-                    }
-
-                    float cellWidth = pageSize.Width / _gridSize;
-                    float cellHeight = pageSize.Height / _gridSize;
-
-                    for (int cell = 0; cell < cells; cell++)
-                    {
-                        int globalSlot = pageIndex * cells + cell;
-
-                        RectangleF cellWorld =
-                            new RectangleF(
-                                pageWorld.X + (cell % _gridSize) * cellWidth,
-                                pageWorld.Y + (cell / _gridSize) * cellHeight,
-                                cellWidth,
-                                cellHeight);
-
-                        RectangleF cellScreen = WorldToScreen(cellWorld);
-
-                        string path =
-                            globalSlot < _slots.Count
-                                ? _slots[globalSlot]
-                                : null;
-
-                        using (Pen cellPen = new Pen(
-                            _theme.BorderColor,
-                            Math.Max(1f, _zoom)))
-                        {
-                            g.DrawRectangle(
-                                cellPen,
-                                cellScreen.X,
-                                cellScreen.Y,
-                                cellScreen.Width,
-                                cellScreen.Height);
-                        }
-
-                        if (string.IsNullOrWhiteSpace(path))
-                        {
-                            using (Brush emptyBrush =
-                                new SolidBrush(Color.FromArgb(245, 248, 250)))
-                            {
-                                g.FillRectangle(emptyBrush, cellScreen);
-                            }
-
-                            using (Font font =
-                                new Font(
-                                    _fontFamily,
-                                    Math.Max(7f, 9f * _zoom),
-                                    FontStyle.Italic))
-                            using (Brush brush =
-                                new SolidBrush(Color.FromArgb(150, 120, 120, 120)))
-                            using (StringFormat format = new StringFormat
-                            {
-                                Alignment = StringAlignment.Center,
-                                LineAlignment = StringAlignment.Center
-                            })
-                            {
-                                g.DrawString(
-                                    "EMPTY CELL",
-                                    font,
-                                    brush,
-                                    cellScreen,
-                                    format);
-                            }
-                        }
-                        else
-                        {
-                            DrawCellImage(
-                                g,
-                                globalSlot,
-                                path,
-                                cellScreen);
-                        }
-                    }
-                }
-            }
-
-            private void DrawCellImage(
-                Graphics g,
-                int slot,
-                string path,
-                RectangleF cellScreen)
-            {
-                int padding =
-                    Math.Max(
-                        4,
-                        (int)Math.Round(10f * _zoom));
-
-                float textHeight = Math.Max(82f, 92f * _zoom);
-                RectangleF imageArea =
-                    new RectangleF(
-                        cellScreen.X + padding,
-                        cellScreen.Y + padding,
-                        Math.Max(1, cellScreen.Width - padding * 2),
-                        Math.Max(1, cellScreen.Height - padding * 2 - textHeight));
-
-                Image image = _thumbnailProvider(path, 620, 480);
-
-                if (image != null)
-                {
-                    using (Brush white = new SolidBrush(Color.White))
-                    {
-                        g.FillRectangle(white, imageArea);
-                    }
-
-                    Rectangle target = FitRectangle(
-                        image.Width,
-                        image.Height,
-                        Rectangle.Round(imageArea));
-
-                    g.DrawImage(
-                        image,
-                        target,
-                        new Rectangle(0, 0, image.Width, image.Height),
-                        GraphicsUnit.Pixel);
-                }
-
-                string filename = Path.GetFileNameWithoutExtension(path);
-                string customRemark;
-                _captions.TryGetValue(path, out customRemark);
-                customRemark =
-                    string.IsNullOrWhiteSpace(customRemark)
-                        ? filename
-                        : customRemark;
-
-                RectangleF filenameRect = GetFilenameRect(cellScreen);
-                RectangleF remarkRect = GetRemarkRect(cellScreen);
-
-                bool showFilename =
-                    string.Equals(_displayMode, "Filename", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(_displayMode, "Both", StringComparison.OrdinalIgnoreCase);
-                bool showRemark =
-                    string.Equals(_displayMode, "Remark", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(_displayMode, "Both", StringComparison.OrdinalIgnoreCase);
-
-                if (showFilename)
-                    DrawCanvasText(g, filename, filenameRect, false);
-
-                if (showRemark)
-                    DrawCanvasText(g, customRemark, remarkRect, false);
-
-                if (string.Equals(
-                    _selectedPath,
-                    path,
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    using (Pen selectedPen = new Pen(
-                        _theme.ActiveColor,
-                        Math.Max(2f, 3f * _zoom)))
-                    {
-                        g.DrawRectangle(
-                            selectedPen,
-                            cellScreen.X + 2,
-                            cellScreen.Y + 2,
-                            Math.Max(1, cellScreen.Width - 4),
-                            Math.Max(1, cellScreen.Height - 4));
-                    }
-                }
-            }
-
-            private void DrawCanvasText(
-                Graphics g,
-                string value,
-                RectangleF rect,
-                bool placeholder)
-            {
-                if (string.IsNullOrWhiteSpace(value))
-                    return;
-
-                RectangleF backgroundRect = rect;
-                using (Brush background = new SolidBrush(
-                    placeholder
-                        ? Color.FromArgb(235, 238, 241)
-                        : Color.FromArgb(246, 248, 250)))
-                using (Pen border = new Pen(
-                    Color.FromArgb(190, 198, 205),
-                    Math.Max(1f, _zoom)))
-                {
-                    g.FillRectangle(background, backgroundRect);
-                    g.DrawRectangle(
-                        border,
-                        backgroundRect.X,
-                        backgroundRect.Y,
-                        Math.Max(1f, backgroundRect.Width - 1f),
-                        Math.Max(1f, backgroundRect.Height - 1f));
-                }
-
-                using (Brush brush = new SolidBrush(
-                    placeholder
-                        ? Color.FromArgb(105, 112, 120)
-                        : Color.FromArgb(35, 40, 45)))
-                using (Font font = new Font(
-                    _fontFamily,
-                    Math.Max(9f, 10f * _zoom),
-                    placeholder ? FontStyle.Italic : FontStyle.Regular))
-                using (StringFormat format = new StringFormat
-                {
-                    Alignment = StringAlignment.Center,
-                    LineAlignment = StringAlignment.Center,
-                    Trimming = StringTrimming.EllipsisWord,
-                    FormatFlags = StringFormatFlags.LineLimit
-                })
-                {
-                    g.DrawString(value, font, brush, rect, format);
-                }
-            }
-
-            private RectangleF GetFilenameRect(RectangleF cellScreen)
-            {
-                float h = Math.Max(30f, 34f * _zoom);
-                float bottomOffset = Math.Max(72f, 76f * _zoom);
-                return new RectangleF(
-                    cellScreen.X + 8,
-                    cellScreen.Bottom - bottomOffset,
-                    Math.Max(1, cellScreen.Width - 16),
-                    h);
-            }
-
-            private RectangleF GetRemarkRect(RectangleF cellScreen)
-            {
-                float h = Math.Max(34f, 42f * _zoom);
-                return new RectangleF(
-                    cellScreen.X + 8,
-                    cellScreen.Bottom - h - Math.Max(5f, 6f * _zoom),
-                    Math.Max(1, cellScreen.Width - 16),
-                    h);
-            }
-
-            private void DrawPasteboardImages(Graphics g)
-            {
-                foreach (string path in _unplaced.ToList())
-                {
-                    if (_dragging &&
-                        string.Equals(
-                            path,
-                            _dragPath,
-                            StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    PointF position;
-                    if (!_positions.TryGetValue(
-                        path,
-                        out position))
-                        continue;
-
-                    SizeF size =
-                        PasteboardImageSize();
-
-                    RectangleF world =
-                        new RectangleF(
-                            position.X,
-                            position.Y,
-                            size.Width,
-                            size.Height);
-
-                    RectangleF screen =
-                        WorldToScreen(world);
-
-                    DrawPasteboardImage(
-                        g,
-                        path,
-                        screen);
-                }
-            }
-
-            private SizeF PasteboardImageSize()
-            {
-                return new SizeF(175f, 145f);
-            }
-
-            private void DrawPasteboardImage(
-                Graphics g,
-                string path,
-                RectangleF screen)
-            {
-                using (Brush cardBrush =
-                    new SolidBrush(
-                        _theme.ControlBg))
-                using (Pen cardPen =
-                    new Pen(
-                        string.Equals(
-                            _selectedPath,
-                            path,
-                            StringComparison.OrdinalIgnoreCase)
-                            ? _theme.ActiveColor
-                            : _theme.BorderColor,
-                        string.Equals(
-                            _selectedPath,
-                            path,
-                            StringComparison.OrdinalIgnoreCase)
-                            ? 2f
-                            : 1f))
-                {
-                    g.FillRectangle(cardBrush, screen);
-                    g.DrawRectangle(
-                        cardPen,
-                        screen.X,
-                        screen.Y,
-                        screen.Width,
-                        screen.Height);
-                }
-
-                RectangleF imageArea =
-                    new RectangleF(
-                        screen.X + 7,
-                        screen.Y + 7,
-                        Math.Max(1, screen.Width - 14),
-                        Math.Max(1, screen.Height - 38));
-
-                Image image =
-                    _thumbnailProvider(
-                        path,
-                        400,
-                        300);
-
-                if (image != null)
-                {
-                    Rectangle target =
-                        FitRectangle(
-                            image.Width,
-                            image.Height,
-                            Rectangle.Round(imageArea));
-
-                    g.DrawImage(
-                        image,
-                        target,
-                        new Rectangle(
-                            0,
-                            0,
-                            image.Width,
-                            image.Height),
-                        GraphicsUnit.Pixel);
-                }
-
-                using (Brush textBrush =
-                    new SolidBrush(_theme.TextColor))
-                using (Font font =
-                    new Font(
-                        _fontFamily,
-                        Math.Max(7f, 8f * _zoom),
-                        FontStyle.Bold))
-                using (StringFormat format =
-                    new StringFormat
-                    {
-                        Alignment = StringAlignment.Center,
-                        LineAlignment = StringAlignment.Center,
-                        Trimming = StringTrimming.EllipsisCharacter
-                    })
-                {
-                    g.DrawString(
-                        Path.GetFileNameWithoutExtension(path),
-                        font,
-                        textBrush,
-                        new RectangleF(
-                            screen.X + 5,
-                            screen.Bottom - 29,
-                            Math.Max(1, screen.Width - 10),
-                            22),
-                        format);
-                }
-
-                using (Brush badge =
-                    new SolidBrush(
-                        Color.FromArgb(
-                            225,
-                            _theme.BgLight)))
-                using (Font badgeFont =
-                    new Font(
-                        _fontFamily,
-                        6.8f,
-                        FontStyle.Bold))
-                {
-                    g.FillRectangle(
-                        badge,
-                        screen.X + 6,
-                        screen.Y + 6,
-                        67,
-                        17);
-
-                    using (Brush badgeText =
-                        new SolidBrush(
-                            _theme.MutedTextColor))
-                    {
-                        g.DrawString(
-                            "NOT IN PDF",
-                            badgeFont,
-                            badgeText,
-                            screen.X + 10,
-                            screen.Y + 9);
-                    }
-                }
-            }
-
-            private void DrawDraggedImage(Graphics g)
-            {
-                if (!_dragging ||
-                    string.IsNullOrWhiteSpace(_dragPath))
-                    return;
-
-                SizeF size =
-                    PasteboardImageSize();
-
-                RectangleF world =
-                    new RectangleF(
-                        _dragCurrentWorld.X - _dragOffset.X,
-                        _dragCurrentWorld.Y - _dragOffset.Y,
-                        size.Width,
-                        size.Height);
-
-                RectangleF screen =
-                    WorldToScreen(world);
-
-                using (Brush brush =
-                    new SolidBrush(
-                        Color.FromArgb(
-                            230,
-                            _theme.ControlBg)))
-                using (Pen pen =
-                    new Pen(
-                        _theme.ActiveColor,
-                        2f))
-                {
-                    g.FillRectangle(brush, screen);
-                    g.DrawRectangle(
-                        pen,
-                        screen.X,
-                        screen.Y,
-                        screen.Width,
-                        screen.Height);
-                }
-
-                Image image =
-                    _thumbnailProvider(
-                        _dragPath,
-                        400,
-                        300);
-
-                if (image != null)
-                {
-                    Rectangle target =
-                        FitRectangle(
-                            image.Width,
-                            image.Height,
-                            Rectangle.Round(
-                                new RectangleF(
-                                    screen.X + 7,
-                                    screen.Y + 7,
-                                    screen.Width - 14,
-                                    screen.Height - 38)));
-
-                    g.DrawImage(
-                        image,
-                        target,
-                        new Rectangle(
-                            0,
-                            0,
-                            image.Width,
-                            image.Height),
-                        GraphicsUnit.Pixel);
-                }
-            }
-
-            private void DrawSelectionHint(Graphics g)
-            {
-                if (!_dragging)
-                    return;
-
-                PointF world =
-                    _dragCurrentWorld;
-
-                int slot =
-                    HitTestSlot(world);
-
-                if (slot >= 0)
-                {
-                    int cells = _gridSize * _gridSize;
-                    int pageIndex = slot / cells;
-                    int local = slot % cells;
-                    SizeF page = PageSizeWorld();
-                    RectangleF pageWorld = PageRectWorld(pageIndex);
-
-                    RectangleF cellWorld =
-                        new RectangleF(
-                            pageWorld.X + (local % _gridSize) *
-                            page.Width / _gridSize,
-                            pageWorld.Y + (local / _gridSize) *
-                            page.Height / _gridSize,
-                            page.Width / _gridSize,
-                            page.Height / _gridSize);
-
-                    RectangleF screen =
-                        WorldToScreen(cellWorld);
-
-                    using (Brush overlay =
-                        new SolidBrush(
-                            Color.FromArgb(
-                                38,
-                                _theme.ActiveColor)))
-                    using (Pen pen =
-                        new Pen(
-                            _theme.ActiveColor,
-                            2f))
-                    {
-                        g.FillRectangle(
-                            overlay,
-                            screen);
-                        g.DrawRectangle(
-                            pen,
-                            screen.X,
-                            screen.Y,
-                            screen.Width,
-                            screen.Height);
-                    }
-                }
-            }
-
-            private string HitTestFilename(Point screen)
-            {
-                PointF world = ScreenToWorld(screen);
-                int cells = _gridSize * _gridSize;
-                SizeF pageSize = PageSizeWorld();
-                float pageStride = pageSize.Height + PageGap;
-                int pageIndex = (int)Math.Floor(world.Y / pageStride);
-                if (pageIndex < 0 || pageIndex >= _totalPages)
-                    return null;
-
-                RectangleF page = PageRectWorld(pageIndex);
-                if (!page.Contains(world))
-                    return null;
-
-                float cellWidth = page.Width / _gridSize;
-                float cellHeight = page.Height / _gridSize;
-                int column = (int)((world.X - page.X) / cellWidth);
-                int row = (int)((world.Y - page.Y) / cellHeight);
-                if (column < 0 || column >= _gridSize ||
-                    row < 0 || row >= _gridSize)
-                    return null;
-
-                int globalSlot = pageIndex * cells + row * _gridSize + column;
-                if (globalSlot < 0 || globalSlot >= _slots.Count)
-                    return null;
-
-                string path = _slots[globalSlot];
-                if (string.IsNullOrWhiteSpace(path))
-                    return null;
-
-                RectangleF cellWorld = new RectangleF(
-                    page.X + column * cellWidth,
-                    page.Y + row * cellHeight,
-                    cellWidth,
-                    cellHeight);
-                return GetFilenameRect(WorldToScreen(cellWorld)).Contains(screen)
-                    ? path
-                    : null;
-            }
-
-            private RectangleF GetFilenameScreenRect(string path)
-            {
-                if (string.IsNullOrWhiteSpace(path))
-                    return RectangleF.Empty;
-
-                int cells = _gridSize * _gridSize;
-                SizeF pageSize = PageSizeWorld();
-                for (int globalSlot = 0; globalSlot < _slots.Count; globalSlot++)
-                {
-                    if (!string.Equals(_slots[globalSlot], path, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    int pageIndex = globalSlot / cells;
-                    int local = globalSlot % cells;
-                    RectangleF page = PageRectWorld(pageIndex);
-                    float cellWidth = page.Width / _gridSize;
-                    float cellHeight = page.Height / _gridSize;
-                    RectangleF cellWorld = new RectangleF(
-                        page.X + (local % _gridSize) * cellWidth,
-                        page.Y + (local / _gridSize) * cellHeight,
-                        cellWidth,
-                        cellHeight);
-                    return GetFilenameRect(WorldToScreen(cellWorld));
-                }
-                return RectangleF.Empty;
-            }
-
-            private string HitTestRemark(Point screen)
-            {
-                PointF world = ScreenToWorld(screen);
-                int cells = _gridSize * _gridSize;
-                SizeF pageSize = PageSizeWorld();
-                float pageStride = pageSize.Height + PageGap;
-
-                int pageIndex = (int)Math.Floor(world.Y / pageStride);
-                if (pageIndex < 0 || pageIndex >= _totalPages)
-                    return null;
-
-                RectangleF page = PageRectWorld(pageIndex);
-                if (!page.Contains(world))
-                    return null;
-
-                float cellWidth = page.Width / _gridSize;
-                float cellHeight = page.Height / _gridSize;
-
-                int column = (int)((world.X - page.X) / cellWidth);
-                int row = (int)((world.Y - page.Y) / cellHeight);
-                if (column < 0 || column >= _gridSize ||
-                    row < 0 || row >= _gridSize)
-                    return null;
-
-                int globalSlot =
-                    pageIndex * cells + row * _gridSize + column;
-
-                if (globalSlot < 0 || globalSlot >= _slots.Count)
-                    return null;
-
-                string path = _slots[globalSlot];
-                if (string.IsNullOrWhiteSpace(path))
-                    return null;
-
-                RectangleF cellWorld = new RectangleF(
-                    page.X + column * cellWidth,
-                    page.Y + row * cellHeight,
-                    cellWidth,
-                    cellHeight);
-
-                RectangleF cellScreen = WorldToScreen(cellWorld);
-                return GetRemarkRect(cellScreen).Contains(screen)
-                    ? path
-                    : null;
-            }
-
-            private RectangleF GetRemarkScreenRect(string path)
-            {
-                if (string.IsNullOrWhiteSpace(path))
-                    return RectangleF.Empty;
-
-                int cells = _gridSize * _gridSize;
-                SizeF pageSize = PageSizeWorld();
-
-                for (int globalSlot = 0;
-                     globalSlot < _slots.Count;
-                     globalSlot++)
-                {
-                    if (!string.Equals(
-                        _slots[globalSlot],
-                        path,
-                        StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    int pageIndex = globalSlot / cells;
-                    int local = globalSlot % cells;
-                    RectangleF page = PageRectWorld(pageIndex);
-
-                    float cellWidth = page.Width / _gridSize;
-                    float cellHeight = page.Height / _gridSize;
-
-                    RectangleF cellWorld = new RectangleF(
-                        page.X + (local % _gridSize) * cellWidth,
-                        page.Y + (local / _gridSize) * cellHeight,
-                        cellWidth,
-                        cellHeight);
-
-                    return GetRemarkRect(WorldToScreen(cellWorld));
-                }
-
-                return RectangleF.Empty;
-            }
-
-            private void BeginInlineCustomNameEdit(string path, RectangleF screenRect)
-            {
-                if (string.IsNullOrWhiteSpace(path))
-                    return;
-
-                EndInlineCaptionEdit(true);
-                EndInlineCustomNameEdit(true);
-
-                string value;
-                _captions.TryGetValue(path, out value);
-                if (string.IsNullOrWhiteSpace(value))
-                    value = Path.GetFileNameWithoutExtension(path);
-
-                _inlineCustomNamePath = path;
-                _selectedPath = path;
-                ImageSelected?.Invoke(path);
-
-                _inlineCustomNameEditor = new TextBox
-                {
-                    Multiline = true,
-                    AcceptsReturn = true,
-                    BorderStyle = BorderStyle.FixedSingle,
-                    BackColor = Color.White,
-                    ForeColor = _theme.TextColor,
-                    Font = new Font(_fontFamily, Math.Max(8f, 8.5f * _zoom), FontStyle.Bold),
-                    Text = value ?? string.Empty,
-                    Bounds = Rectangle.Round(screenRect),
-                    Tag = path
-                };
-                _inlineCustomNameEditor.KeyDown += InlineCustomNameEditor_KeyDown;
-                _inlineCustomNameEditor.Leave += (sender, args) => EndInlineCustomNameEdit(true);
-                Controls.Add(_inlineCustomNameEditor);
-                _inlineCustomNameEditor.BringToFront();
-                _inlineCustomNameEditor.SelectAll();
-                _inlineCustomNameEditor.Focus();
-            }
-
-            private void InlineCustomNameEditor_KeyDown(object sender, KeyEventArgs e)
-            {
-                if (e.KeyCode == Keys.Escape)
-                {
-                    EndInlineCustomNameEdit(false);
-                    e.SuppressKeyPress = true;
-                }
-                else if (e.KeyCode == Keys.Enter && !e.Shift)
-                {
-                    EndInlineCustomNameEdit(true);
-                    e.SuppressKeyPress = true;
-                }
-            }
-
-            private void EndInlineCustomNameEdit(bool save)
-            {
-                if (_inlineCustomNameEditor == null)
-                    return;
-
-                string path = _inlineCustomNamePath;
-                string value = _inlineCustomNameEditor.Text.Trim();
-                TextBox editor = _inlineCustomNameEditor;
-                _inlineCustomNameEditor = null;
-                _inlineCustomNamePath = null;
-
-                if (save && !string.IsNullOrWhiteSpace(path))
-                {
-                    if (string.IsNullOrWhiteSpace(value))
-                    {
-                        _captions.Remove(path);
-                        _customNames.Remove(path);
-                    }
-                    else
-                    {
-                        _captions[path] = value;
-                        _customNames[path] = value;
-                    }
-                    LayoutChanged?.Invoke(this, EventArgs.Empty);
-                }
-
-                editor.KeyDown -= InlineCustomNameEditor_KeyDown;
-                Controls.Remove(editor);
-                editor.Dispose();
-                Invalidate();
-            }
-
-            private void BeginInlineCaptionEdit(string path, RectangleF screenRect)
-            {
-                if (string.IsNullOrWhiteSpace(path))
-                    return;
-
-                EndInlineCaptionEdit(true);
-                EndInlineCustomNameEdit(true);
-
-                string caption;
-                _captions.TryGetValue(path, out caption);
-
-                _inlineCaptionPath = path;
-                _selectedPath = path;
-                if (ImageSelected != null)
-                    ImageSelected(path);
-                _inlineCaptionEditor = new TextBox
-                {
-                    Multiline = true,
-                    AcceptsReturn = true,
-                    BorderStyle = BorderStyle.FixedSingle,
-                    BackColor = Color.White,
-                    ForeColor = _theme.TextColor,
-                    Font = new Font(_fontFamily, Math.Max(8f, 8.5f * _zoom), FontStyle.Bold),
-                    Text = caption ?? string.Empty,
-                    Bounds = Rectangle.Round(screenRect),
-                    Tag = path
-                };
-
-                _inlineCaptionEditor.KeyDown += InlineCaptionEditor_KeyDown;
-                _inlineCaptionEditor.Leave += (s, e) => EndInlineCaptionEdit(true);
-                Controls.Add(_inlineCaptionEditor);
-                _inlineCaptionEditor.BringToFront();
-                _inlineCaptionEditor.SelectAll();
-                _inlineCaptionEditor.Focus();
-            }
-
-            private void InlineCaptionEditor_KeyDown(object sender, KeyEventArgs e)
-            {
-                if (e.KeyCode == Keys.Escape)
-                {
-                    EndInlineCaptionEdit(false);
-                    e.SuppressKeyPress = true;
-                }
-                else if (e.KeyCode == Keys.Enter && !e.Shift)
-                {
-                    EndInlineCaptionEdit(true);
-                    e.SuppressKeyPress = true;
-                }
-            }
-
-            private void EndInlineCaptionEdit(bool save)
-            {
-                if (_inlineCaptionEditor == null)
-                    return;
-
-                string path = _inlineCaptionPath;
-                string value = _inlineCaptionEditor.Text.Trim();
-
-                TextBox editor = _inlineCaptionEditor;
-                _inlineCaptionEditor = null;
-                _inlineCaptionPath = null;
-
-                if (save && !string.IsNullOrWhiteSpace(path))
-                {
-                    if (string.IsNullOrWhiteSpace(value))
-                        _captions.Remove(path);
-                    else
-                        _captions[path] = value;
-
-                    LayoutChanged?.Invoke(this, EventArgs.Empty);
-                }
-
-                editor.KeyDown -= InlineCaptionEditor_KeyDown;
-                Controls.Remove(editor);
-                editor.Dispose();
-                Invalidate();
-            }
-
-            private void Canvas_MouseWheel(
-                object sender,
-                MouseEventArgs e)
-            {
-                float factor =
-                    e.Delta > 0
-                        ? 1.12f
-                        : 0.89f;
-
-                ZoomAt(e.Location, factor);
-            }
-
-            private void Canvas_MouseDown(
-                object sender,
-                MouseEventArgs e)
-            {
-                Focus();
-                EnsureView();
-
-                if (e.Button == MouseButtons.Middle ||
-                    (e.Button == MouseButtons.Left && _spaceDown))
-                {
-                    _panning = true;
-                    _panStartScreen = e.Location;
-                    _panStartCenter = _viewCenter;
-                    Cursor = Cursors.Hand;
-                    return;
-                }
-
-                if (e.Button != MouseButtons.Left)
-                    return;
-
-                string filenamePath = HitTestFilename(e.Location);
-                if (!string.IsNullOrWhiteSpace(filenamePath))
-                {
-                    RectangleF editRect =
-                        GetRemarkScreenRect(filenamePath);
-                    if (editRect.IsEmpty)
-                        editRect = GetFilenameScreenRect(filenamePath);
-
-                    BeginInlineCustomNameEdit(
-                        filenamePath,
-                        editRect);
-                    return;
-                }
-
-                string remarkPath = HitTestRemark(e.Location);
-                if (!string.IsNullOrWhiteSpace(remarkPath))
-                {
-                    BeginInlineCaptionEdit(
-                        remarkPath,
-                        GetRemarkScreenRect(remarkPath));
-                    return;
-                }
-
-                EndInlineCaptionEdit(true);
-                EndInlineCustomNameEdit(true);
-                PointF world = ScreenToWorld(e.Location);
-
-                string unplacedPath =
-                    HitTestUnplaced(world);
-
-                if (!string.IsNullOrWhiteSpace(unplacedPath))
-                {
-                    BeginImageDrag(
-                        unplacedPath,
-                        -1,
-                        world);
-                    return;
-                }
-
-                int globalSlot = HitTestSlot(world);
-                if (globalSlot >= 0)
-                {
-                    if (globalSlot >= 0 &&
-                        globalSlot < _slots.Count &&
-                        !string.IsNullOrWhiteSpace(
-                            _slots[globalSlot]))
-                    {
-                        BeginImageDrag(
-                            _slots[globalSlot],
-                            globalSlot,
-                            world);
-                    }
-                    else
-                    {
-                        ClearSelection();
-                    }
-                }
-                else
-                {
-                    ClearSelection();
-                }
-            }
-
-            private void Canvas_MouseMove(
-                object sender,
-                MouseEventArgs e)
-            {
-                if (_panning)
-                {
-                    float dx =
-                        (e.X - _panStartScreen.X) /
-                        _zoom;
-                    float dy =
-                        (e.Y - _panStartScreen.Y) /
-                        _zoom;
-
-                    _viewCenter =
-                        new PointF(
-                            _panStartCenter.X - dx,
-                            _panStartCenter.Y - dy);
-
-                    Invalidate();
-                    return;
-                }
-
-                if (!_dragging)
-                    return;
-
-                PointF world = ScreenToWorld(e.Location);
-
-                if (!_dragMoved)
-                {
-                    float dx =
-                        world.X - _dragCurrentWorld.X;
-                    float dy =
-                        world.Y - _dragCurrentWorld.Y;
-
-                    if (Math.Sqrt(dx * dx + dy * dy) < 4f)
-                        return;
-
-                    _dragMoved = true;
-                }
-
-                _dragCurrentWorld = world;
-                Invalidate();
-            }
-
-            private void Canvas_MouseUp(
-                object sender,
-                MouseEventArgs e)
-            {
-                if (e.Button == MouseButtons.Middle ||
-                    (e.Button == MouseButtons.Left && _panning))
-                {
-                    _panning = false;
-                    Cursor = Cursors.Default;
-                    return;
-                }
-
-                if (e.Button != MouseButtons.Left ||
-                    !_dragging)
-                    return;
-
-                PointF dropWorld =
-                    ScreenToWorld(e.Location);
-
-                bool moved =
-                    _dragMoved;
-
-                if (!moved)
-                {
-                    SelectImageInternal(_dragPath);
-                    EndDrag();
-                    return;
-                }
-
-                ApplyDragDrop(dropWorld);
-                EndDrag();
-            }
-
-            private void BeginImageDrag(
-                string path,
-                int sourceSlot,
-                PointF world)
-            {
-                _selectedPath = path;
-                SelectImageInternal(path);
-
-                _dragging = true;
-                _dragMoved = false;
-                _dragPath = path;
-                _dragSourceSlot = sourceSlot;
-                _dragCurrentWorld = world;
-
-                if (sourceSlot < 0)
-                {
-                    PointF position;
-                    if (_positions.TryGetValue(
-                        path,
-                        out position))
-                    {
-                        SizeF size =
-                            PasteboardImageSize();
-
-                        _dragOffset =
-                            new PointF(
-                                world.X - position.X,
-                                world.Y - position.Y);
-                    }
-                    else
-                    {
-                        _dragOffset = new PointF(0, 0);
-                    }
-                }
-                else
-                {
-                    _dragOffset = new PointF(0, 0);
-                }
-
-                Capture = true;
-                Invalidate();
-            }
-
-            private void ApplyDragDrop(PointF dropWorld)
-            {
-                if (string.IsNullOrWhiteSpace(_dragPath))
-                    return;
-
-                if (_dragSourceSlot >= 0)
-                {
-                    SnapshotRequested?.Invoke(this, EventArgs.Empty);
-
-                    int targetGlobal =
-                        HitTestSlot(dropWorld);
-
-                    if (targetGlobal >= 0)
-                    {
-                        if (targetGlobal != _dragSourceSlot)
-                        {
-                            string sourcePath =
-                                _slots[_dragSourceSlot];
-
-                            string targetPath =
-                                targetGlobal < _slots.Count
-                                    ? _slots[targetGlobal]
-                                    : null;
-
-                            _slots[_dragSourceSlot] =
-                                targetPath;
-                            _slots[targetGlobal] =
-                                sourcePath;
-
-                            if (!string.IsNullOrWhiteSpace(targetPath))
-                            {
-                                _unplaced.Remove(sourcePath);
-                                _unplaced.Remove(targetPath);
-                            }
-                            else
-                            {
-                                _unplaced.Remove(sourcePath);
-                            }
-
-                            LayoutChanged?.Invoke(
-                                this,
-                                EventArgs.Empty);
-                        }
-                        return;
-                    }
-
-                    // Dropped outside the white page: remove from its cell
-                    // and keep it visibly on the infinite pasteboard.
-                    _slots[_dragSourceSlot] = null;
-                    _unplaced.Add(_dragPath);
-
-                    SizeF size =
-                        PasteboardImageSize();
-
-                    _positions[_dragPath] =
-                        new PointF(
-                            dropWorld.X -
-                            Math.Min(
-                                size.Width / 2f,
-                                size.Width * 0.5f),
-                            dropWorld.Y -
-                            Math.Min(
-                                size.Height / 2f,
-                                size.Height * 0.5f));
-
-                    LayoutChanged?.Invoke(
-                        this,
-                        EventArgs.Empty);
-                    return;
-                }
-
-                SnapshotRequested?.Invoke(this, EventArgs.Empty);
-
-                int global =
-                    HitTestSlot(dropWorld);
-
-                if (global >= 0)
-                {
-
-                    string oldPath =
-                        _slots[global];
-
-                    if (string.IsNullOrWhiteSpace(oldPath))
-                    {
-                        _slots[global] = _dragPath;
-                        _unplaced.Remove(_dragPath);
-                    }
-                    else if (!string.Equals(
-                        oldPath,
-                        _dragPath,
-                        StringComparison.OrdinalIgnoreCase))
-                    {
-                        // The incoming pasteboard image takes the cell and
-                        // the previous cell occupant is released to the
-                        // pasteboard. This avoids silently deleting anything.
-                        _slots[global] = _dragPath;
-                        _unplaced.Remove(_dragPath);
-                        _unplaced.Add(oldPath);
-
-                        PointF oldPosition =
-                            new PointF(
-                                PageSizeWorld().Width + 80f,
-                                80f);
-
-                        PointF incomingPosition;
-                        if (_positions.TryGetValue(
-                            _dragPath,
-                            out incomingPosition))
-                        {
-                            oldPosition = incomingPosition;
-                        }
-
-                        _positions[oldPath] = oldPosition;
-                    }
-
-                    LayoutChanged?.Invoke(
-                        this,
-                        EventArgs.Empty);
-                }
-                else
-                {
-                    _positions[_dragPath] =
-                        new PointF(
-                            dropWorld.X - 87.5f,
-                            dropWorld.Y - 72.5f);
-                    _unplaced.Add(_dragPath);
-
-                    LayoutChanged?.Invoke(
-                        this,
-                        EventArgs.Empty);
-                }
-            }
-
-            private void EndDrag()
-            {
-                _dragging = false;
-                _dragMoved = false;
-                _dragPath = null;
-                _dragSourceSlot = -1;
-                Capture = false;
-                Cursor = Cursors.Default;
-                Invalidate();
-            }
-
-            private void ClearSelection()
-            {
-                _selectedPath = null;
-                if (ImageSelected != null) ImageSelected(null);
-                Invalidate();
-            }
-
-            private void SelectImageInternal(string path)
-            {
-                _selectedPath = path;
-                if (ImageSelected != null) ImageSelected(path);
-                Invalidate();
-            }
-
-            private int HitTestSlot(PointF world)
-            {
-                SizeF pageSize = PageSizeWorld();
-                float pageStride = pageSize.Height + PageGap;
-
-                int pageIndex =
-                    (int)Math.Floor(world.Y / pageStride);
-
-                if (pageIndex < 0 || pageIndex >= _totalPages)
-                    return -1;
-
-                RectangleF page = PageRectWorld(pageIndex);
-
-                if (!page.Contains(world))
-                    return -1;
-
-                int column =
-                    (int)((world.X - page.X) /
-                          (page.Width / _gridSize));
-
-                int row =
-                    (int)((world.Y - page.Y) /
-                          (page.Height / _gridSize));
-
-                if (column < 0 ||
-                    column >= _gridSize ||
-                    row < 0 ||
-                    row >= _gridSize)
-                    return -1;
-
-                return pageIndex * (_gridSize * _gridSize) +
-                    row * _gridSize +
-                    column;
-            }
-
-            private string HitTestUnplaced(PointF world)
-            {
-                SizeF size =
-                    PasteboardImageSize();
-
-                for (int i = _unplaced.Count - 1; i >= 0; i--)
-                {
-                    string path =
-                        _unplaced.ElementAt(i);
-
-                    PointF position;
-                    if (!_positions.TryGetValue(
-                        path,
-                        out position))
-                        continue;
-
-                    RectangleF rect =
-                        new RectangleF(
-                            position.X,
-                            position.Y,
-                            size.Width,
-                            size.Height);
-
-                    if (rect.Contains(world))
-                        return path;
-                }
-
-                return null;
-            }
-
-            private static Rectangle FitRectangle(
-                int sourceWidth,
-                int sourceHeight,
-                Rectangle bounds)
-            {
-                if (sourceWidth <= 0 ||
-                    sourceHeight <= 0)
-                    return bounds;
-
-                float scale =
-                    Math.Min(
-                        bounds.Width / (float)sourceWidth,
-                        bounds.Height / (float)sourceHeight);
-
-                int width =
-                    Math.Max(
-                        1,
-                        (int)Math.Round(
-                            sourceWidth * scale));
-
-                int height =
-                    Math.Max(
-                        1,
-                        (int)Math.Round(
-                            sourceHeight * scale));
-
-                return new Rectangle(
-                    bounds.X +
-                    (bounds.Width - width) / 2,
-                    bounds.Y +
-                    (bounds.Height - height) / 2,
-                    width,
-                    height);
-            }
-
-            private void Canvas_DragEnter(
-                object sender,
-                DragEventArgs e)
-            {
-                if (e.Data.GetDataPresent(ImagePathFormat))
-                    e.Effect = DragDropEffects.Move;
-                else
-                    e.Effect = DragDropEffects.None;
-            }
-
-            private void Canvas_DragDrop(
-                object sender,
-                DragEventArgs e)
-            {
-                string path =
-                    e.Data.GetData(ImagePathFormat) as string;
-
-                if (string.IsNullOrWhiteSpace(path) ||
-                    !_allImages.Any(
-                        p => string.Equals(
-                            p,
-                            path,
-                            StringComparison.OrdinalIgnoreCase)))
-                    return;
-
-                Point screen =
-                    PointToClient(
-                        new Point(
-                            e.X,
-                            e.Y));
-
-                PointF world =
-                    ScreenToWorld(screen);
-
-                SnapshotRequested?.Invoke(
-                    this,
-                    EventArgs.Empty);
-
-                int global = HitTestSlot(world);
-                if (global >= 0)
-                {
-                    string old =
-                        _slots[global];
-
-                    if (string.IsNullOrWhiteSpace(old))
-                    {
-                        _slots[global] = path;
-                        _unplaced.Remove(path);
-                    }
-                    else if (!string.Equals(
-                        old,
-                        path,
-                        StringComparison.OrdinalIgnoreCase))
-                    {
-                        _slots[global] = path;
-                        _unplaced.Remove(path);
-                        _unplaced.Add(old);
-                        _positions[old] =
-                            new PointF(
-                                PageSizeWorld().Width + 80f,
-                                80f);
-                    }
-
-                    LayoutChanged?.Invoke(
-                        this,
-                        EventArgs.Empty);
-                }
-                else
-                {
-                    _unplaced.Add(path);
-                    _positions[path] =
-                        new PointF(
-                            world.X - 87.5f,
-                            world.Y - 72.5f);
-
-                    LayoutChanged?.Invoke(
-                        this,
-                        EventArgs.Empty);
-                }
-            }
         }
     }
 }

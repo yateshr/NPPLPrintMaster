@@ -3000,14 +3000,13 @@ namespace NPPLPrintMaster
             if (cmbCollageOutputType != null)
                 cmbCollageOutputType.SelectedItem = "PDF";
 
-            if (cmbCollageGrid != null)
-                cmbCollageGrid.SelectedIndex = 0;
+            if (cmbCollageColumns != null && cmbCollageRows != null)
+            {
+                cmbCollageColumns.SelectedIndex = 0;
+                cmbCollageRows.SelectedIndex = 0;
+            }
 
-            manualCollageSlots = null;
-            manualCollageCaptions = null;
-            manualCollageCustomNames = null;
-
-            UpdateCollageArrangementButtons();
+            ResetManualCollageArrangement();
 
             if (navButtons.Count > 2)
                 SwitchPage(

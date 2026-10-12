@@ -152,12 +152,19 @@ Features include:
 
 A visual workspace for arranging image assets into print-oriented layouts.
 
-- Grid layouts
+- Grid layouts with separate columns and rows (2 x 3, 3 x 4 and so on)
+- Page header, date and page numbers on every sheet
+- Choice of text size for the names under the images
+- Remarks for many images at once, or loaded from an Excel / CSV sheet
 - Automatic arrangement
-- Manual arrangement
+- Manual arrangement by drag and drop, between cells and across pages
+- Searchable image library with multi-select, built for 100+ images
+- Page strip for jumping to, and dropping onto, any page
 - Multiple pages
 - Page orientation
-- Captions / filenames
+- Captions centered below each image: filename, remark and an additional remark line
+- Re-open a collage later: every PDF carries its arrangement and can be imported again to revise it
+- Add or remove images inside the arrangement workspace
 - Grid-cell borders
 - Drag and drop
 - Selection
@@ -393,7 +400,10 @@ Final BMP Export
 | Smart Image Finder | `SmartImageFinderEngine.cs` |
 | Smart Finder UI | `Form1.SmartFinder.cs` |
 | Collage | `ImageCollageEngine.cs` |
-| Collage UI | `CollageArrangementForm.cs` |
+| Collage UI | `CollageArrangementForm.cs`, `CollageLibraryView.cs`, `CollagePageCanvas.cs`, `CollagePageNavigator.cs` |
+| Collage arrangement | `CollageArrangementModel.cs`, `CollageCellLayout.cs`, `CollageThumbnailCache.cs` |
+| Collage saved layouts and page setup | `CollageLayoutFile.cs` |
+| Collage remark sheets | `CollageRemarkSheet.cs` |
 | Freeform Builder | `FreeformBuilderForm.cs` |
 | Freeform items | `CanvasItem.cs` |
 | A4 reference | `FreeformA4PreviewFeature.cs` |
