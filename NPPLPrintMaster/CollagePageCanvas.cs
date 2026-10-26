@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -52,6 +54,9 @@ namespace NPPLPrintMaster
         private bool _viewInitialized;
 
         private int _selectedSlot = -1;
+        private readonly HashSet<string> _selectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private int _selectionAnchor = -1;
+        private bool _collapseSelectionOnClick;
         private int _hoverSlot = -1;
 
         private int _pressSlot = -1;
@@ -74,13 +79,16 @@ namespace NPPLPrintMaster
         private TextBox _editor;
         private string _editorPath;
         private bool _editorIsNote;
+        private bool _editorChanged;
 
         public bool InsertMode { get; set; }
 
         public event EventHandler SelectionChanged;
         public event EventHandler ViewChanged;
         public event Action<string[], int, bool> ImagesDropped;
-        public event Action<string> RemoveRequested;
+        public event Action<IList<string>> RemoveRequested;
+        public event Action<bool> EditSelectionRequested;
+        public event EventHandler PendingEditChanged;
         // Image path, true for the additional remark, the new text.
         public event Action<string, bool, string> TextEdited;
 
@@ -162,6 +170,46 @@ namespace NPPLPrintMaster
             get { return _model.GetSlot(_selectedSlot); }
         }
 
+        public IList<string> SelectedPaths
+        {
+            get { return _selectedPaths.Where(_model.IsPlaced).OrderBy(_model.IndexOf).ToList(); }
+        }
+
+        public bool IsEditing { get { return _editor != null; } }
+
+        public void SelectPaths(IEnumerable<string> paths)
+        {
+            _selectedPaths.Clear();
+            foreach (string path in paths)
+                if (path != null && _model.IsPlaced(path)) _selectedPaths.Add(path);
+            if (SelectedPath != null && !_selectedPaths.Contains(SelectedPath))
+                _selectedSlot = -1;
+            if (_selectedSlot < 0 && _selectedPaths.Count > 0)
+                _selectedSlot = _selectedPaths.Min(_model.IndexOf);
+            Invalidate();
+        }
+
+        public void SelectAllCells(bool currentPageOnly)
+        {
+            int start = currentPageOnly ? CurrentPage * _model.CellsPerPage : 0;
+            int end = currentPageOnly ? start + _model.CellsPerPage : _model.SlotCount;
+            SelectPaths(Enumerable.Range(start, Math.Max(0, end - start)).Select(_model.GetSlot));
+            _selectionAnchor = _selectedSlot;
+            RaiseSelectionChanged();
+        }
+
+        public void ClearCellSelection()
+        {
+            SetSelectedSlot(-1, true);
+        }
+
+        // Also used by recovery to retain text that is still being typed.
+        public void CapturePendingText(Action<string, bool, string> capture)
+        {
+            if (_editor != null && _editorPath != null)
+                capture(_editorPath, _editorIsNote, _editor.Text);
+        }
+
         public string DisplayMode
         {
             get { return _displayMode; }
@@ -208,6 +256,7 @@ namespace NPPLPrintMaster
         // Call after the arrangement changed.
         public void OnModelChanged()
         {
+            _selectedPaths.RemoveWhere(p => !_model.IsPlaced(p));
             if (_selectedSlot >= _model.SlotCount)
                 _selectedSlot = -1;
 
@@ -808,8 +857,11 @@ namespace NPPLPrintMaster
                     captionFormat);
             }
 
-            if (slot == _selectedSlot)
+            if ((path != null && _selectedPaths.Contains(path)) ||
+                (path == null && slot == _selectedSlot))
             {
+                using (Brush tint = new SolidBrush(Color.FromArgb(24, _theme.ActiveColor)))
+                    g.FillRectangle(tint, cell);
                 using (Pen selected = new Pen(_theme.ActiveColor, 2f))
                 {
                     g.DrawRectangle(
@@ -1135,11 +1187,25 @@ namespace NPPLPrintMaster
                 return;
 
             int slot = HitTestSlot(e.Location);
-            SetSelectedSlot(slot, true);
+            _collapseSelectionOnClick = false;
+            bool control = (ModifierKeys & Keys.Control) != 0;
+            bool shift = (ModifierKeys & Keys.Shift) != 0;
+            if (e.Button == MouseButtons.Right && _selectedPaths.Contains(_model.GetSlot(slot) ?? string.Empty))
+                _selectedSlot = slot;
+            else if (control || shift)
+                ExtendSelection(slot, control, shift);
+            else if (slot >= 0 && _selectedPaths.Count > 1 &&
+                _selectedPaths.Contains(_model.GetSlot(slot) ?? string.Empty))
+            {
+                _selectedSlot = slot;
+                _collapseSelectionOnClick = true;
+            }
+            else SetSelectedSlot(slot, true);
 
             _pressSlot = -1;
 
             if (e.Button == MouseButtons.Left &&
+                !control && !shift &&
                 slot >= 0 &&
                 _model.GetSlot(slot) != null)
             {
@@ -1200,6 +1266,9 @@ namespace NPPLPrintMaster
                 Cursor = _spaceDown ? Cursors.SizeAll : Cursors.Default;
             }
 
+            if (_collapseSelectionOnClick && _pressSlot >= 0)
+                SetSelectedSlot(_pressSlot, true);
+            _collapseSelectionOnClick = false;
             _pressSlot = -1;
         }
 
@@ -1233,6 +1302,7 @@ namespace NPPLPrintMaster
         {
             int slot = _pressSlot;
             _pressSlot = -1;
+            _collapseSelectionOnClick = false;
 
             string path = _model.GetSlot(slot);
             if (path == null)
@@ -1244,7 +1314,7 @@ namespace NPPLPrintMaster
             try
             {
                 DoDragDrop(
-                    CollageDrag.Create(new[] { path }, CollageDrag.SourceCanvas),
+                    CollageDrag.Create(SelectedPaths.ToArray(), CollageDrag.SourceCanvas),
                     DragDropEffects.Move);
             }
             finally
@@ -1259,14 +1329,44 @@ namespace NPPLPrintMaster
             if (slot < 0 || slot >= _model.SlotCount)
                 slot = -1;
 
-            if (slot == _selectedSlot)
-                return;
-
             _selectedSlot = slot;
+            _selectionAnchor = slot;
+            _selectedPaths.Clear();
+            string path = _model.GetSlot(slot);
+            if (path != null) _selectedPaths.Add(path);
             Invalidate();
 
-            if (raise && SelectionChanged != null)
-                SelectionChanged(this, EventArgs.Empty);
+            if (raise) RaiseSelectionChanged();
+        }
+
+        private void RaiseSelectionChanged()
+        {
+            if (SelectionChanged != null) SelectionChanged(this, EventArgs.Empty);
+        }
+
+        internal void ExtendSelection(int slot, bool control, bool shift)
+        {
+            if (slot < 0 || slot >= _model.SlotCount) return;
+            if (shift)
+            {
+                int anchor = _selectionAnchor >= 0 && _selectionAnchor < _model.SlotCount
+                    ? _selectionAnchor : slot;
+                if (!control) _selectedPaths.Clear();
+                for (int i = Math.Min(anchor, slot); i <= Math.Max(anchor, slot); i++)
+                {
+                    string path = _model.GetSlot(i);
+                    if (path != null) _selectedPaths.Add(path);
+                }
+            }
+            else
+            {
+                string path = _model.GetSlot(slot);
+                if (path != null && !_selectedPaths.Remove(path)) _selectedPaths.Add(path);
+                _selectionAnchor = slot;
+            }
+            _selectedSlot = slot;
+            Invalidate();
+            RaiseSelectionChanged();
         }
 
         // ------------------------------------------------------------
@@ -1300,6 +1400,9 @@ namespace NPPLPrintMaster
                         Cursor = Cursors.SizeAll;
                     }
                     break;
+                case Keys.Escape:
+                    ClearCellSelection();
+                    break;
                 case Keys.Left:
                     MoveSelection(-1);
                     break;
@@ -1326,13 +1429,15 @@ namespace NPPLPrintMaster
                     break;
                 case Keys.Delete:
                 case Keys.Back:
-                    if (SelectedPath != null && RemoveRequested != null)
-                        RemoveRequested(SelectedPath);
+                    if (_selectedPaths.Count > 0 && RemoveRequested != null)
+                        RemoveRequested(SelectedPaths);
                     break;
                 case Keys.F2:
                 case Keys.Enter:
                     // Shift edits the additional remark instead.
-                    if (SelectedPath != null)
+                    if (_selectedPaths.Count > 1 && EditSelectionRequested != null)
+                        EditSelectionRequested(e.Shift);
+                    else if (SelectedPath != null)
                         BeginEdit(SelectedPath, e.Shift);
                     break;
                 default:
@@ -1377,7 +1482,9 @@ namespace NPPLPrintMaster
                         0,
                         Math.Min(_model.SlotCount - 1, _selectedSlot + delta));
 
-            SetSelectedSlot(slot, true);
+            if ((ModifierKeys & Keys.Shift) != 0)
+                ExtendSelection(slot, (ModifierKeys & Keys.Control) != 0, true);
+            else SetSelectedSlot(slot, true);
             EnsureSlotVisible(slot);
         }
 
@@ -1523,6 +1630,7 @@ namespace NPPLPrintMaster
 
             _editorPath = path;
             _editorIsNote = note;
+            _editorChanged = false;
             _editor = new TextBox
             {
                 BorderStyle = BorderStyle.FixedSingle,
@@ -1537,6 +1645,11 @@ namespace NPPLPrintMaster
             };
 
             _editor.KeyDown += Editor_KeyDown;
+            _editor.TextChanged += (s, e) =>
+            {
+                _editorChanged = true;
+                if (PendingEditChanged != null) PendingEditChanged(this, EventArgs.Empty);
+            };
             _editor.LostFocus += (s, e) => CommitEdit();
 
             Controls.Add(_editor);
@@ -1667,7 +1780,7 @@ namespace NPPLPrintMaster
             }
         }
 
-        private void CommitEdit()
+        public void CommitEdit()
         {
             EndEdit(true);
         }
@@ -1681,6 +1794,7 @@ namespace NPPLPrintMaster
             string path = _editorPath;
             string text = editor.Text;
             bool note = _editorIsNote;
+            bool textChanged = _editorChanged;
 
             _editor = null;
             _editorPath = null;
@@ -1701,6 +1815,8 @@ namespace NPPLPrintMaster
 
             if (save && path != null && TextEdited != null)
                 TextEdited(path, note, text);
+
+            if (textChanged && PendingEditChanged != null) PendingEditChanged(this, EventArgs.Empty);
 
             Invalidate();
         }

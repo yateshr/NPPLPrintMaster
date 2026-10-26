@@ -164,6 +164,8 @@
     </Compile>
     <Compile Include="HelpViewer.cs" />
     <Compile Include="ImageCollageEngine.cs" />
+    <Compile Include="CollagePdfRenderer.cs" />
+    <Compile Include="CollageRecoveryStore.cs" />
     <Compile Include="CollageArrangementForm.cs">
       <SubType>Form</SubType>
     </Compile>

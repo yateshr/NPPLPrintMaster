@@ -10,6 +10,39 @@ namespace NPPLPrintMaster
 {
     public partial class Form1 : Form
     {
+        private void OfferCollageRecovery(bool startup)
+        {
+            try
+            {
+                string path = CollageRecoveryStore.FindLatest();
+                if (path == null)
+                {
+                    if (!startup) MessageBox.Show(this, "No saved collage recovery draft was found.", "Collage Recovery");
+                    return;
+                }
+                if (MessageBox.Show(this,
+                    "An autosaved collage from " + File.GetLastWriteTime(path).ToString("dd MMM yyyy HH:mm") +
+                    " is available.\n\nRestore its images, page arrangement and text?\n" +
+                    "Choose No to keep the draft for later in File > Recover autosaved collage.",
+                    "Collage Recovery", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                    return;
+                string previousOutput = txtCollageOutput.Text;
+                bool imported = ImportCollageLayout(path);
+                // The recovery folder is internal storage, not an export destination.
+                txtCollageOutput.Text = previousOutput;
+                if (imported)
+                {
+                    SwitchPage(pageFormat, navButtons[2], "Step 2: Image Formatting");
+                    BtnArrangeCollage_Click(this, EventArgs.Empty);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "The recovery draft could not be opened.\n\n" + ex.Message,
+                    "Collage Recovery", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
         private List<string> GetCurrentCollageFiles()
         {
             List<string> filesToProcess = new List<string>();

@@ -96,7 +96,7 @@ namespace NPPLPrintMaster
 
             // A saved arrangement may have been made for another grid; the
             // cells keep their order and simply flow into this one.
-            TrimTrailingEmptyCells();
+            if (initialSlots == null) TrimTrailingEmptyCells();
             PadToWholePages();
             Reindex();
 

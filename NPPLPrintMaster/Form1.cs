@@ -385,6 +385,7 @@ namespace NPPLPrintMaster
             BuildInterface();
             this.Load += Form1_Load;
             this.FormClosing += Form1_FormClosing;
+            this.Shown += (s, e) => BeginInvoke((Action)(() => OfferCollageRecovery(true)));
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -426,9 +427,11 @@ namespace NPPLPrintMaster
             saveItem.Click += (s, e) => SaveWorkspace();
             ToolStripMenuItem loadItem = new ToolStripMenuItem("📂 Load Workspace...");
             loadItem.Click += (s, e) => LoadWorkspace();
+            ToolStripMenuItem recoverCollage = new ToolStripMenuItem("Recover autosaved collage...");
+            recoverCollage.Click += (s, e) => OfferCollageRecovery(false);
             ToolStripMenuItem exitItem = new ToolStripMenuItem("Exit");
             exitItem.Click += (s, e) => Application.Exit();
-            fileMenu.DropDownItems.AddRange(new ToolStripItem[] { saveItem, loadItem, new ToolStripSeparator(), exitItem });
+            fileMenu.DropDownItems.AddRange(new ToolStripItem[] { saveItem, loadItem, recoverCollage, new ToolStripSeparator(), exitItem });
 
             ToolStripMenuItem editMenu = new ToolStripMenuItem("Edit");
             ToolStripMenuItem clearItem = new ToolStripMenuItem("Clear All Images");

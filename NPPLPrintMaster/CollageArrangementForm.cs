@@ -96,6 +96,11 @@ namespace NPPLPrintMaster
         private bool _updatingPageCombo;
         private bool _dirty;
         private bool _accepted;
+        private readonly string _recoveryPath = CollageRecoveryStore.NewDraftPath();
+        private readonly Timer _autosaveTimer = new Timer { Interval = 10000 };
+        private bool _autosavePending;
+        private string _autosaveStatus = "Autosave ready";
+        private Label _autosaveLabel;
 
         public IList<string> ResultSlots { get; private set; }
         public IDictionary<string, string> ResultCaptions { get; private set; }
@@ -175,7 +180,8 @@ namespace NPPLPrintMaster
 
             BuildInterface();
 
-            _model.Changed += (s, e) => RefreshAll();
+            _model.Changed += (s, e) => { QueueAutosave(); RefreshAll(); };
+            _autosaveTimer.Tick += (s, e) => SaveRecoveryDraft(false);
             _thumbnails.ThumbnailsReady += Thumbnails_Ready;
 
             RefreshAll();
@@ -251,6 +257,9 @@ namespace NPPLPrintMaster
                 {
                     _canvas.FitPage();
                     _canvas.Focus();
+                    _autosavePending = true;
+                    SaveRecoveryDraft(false);
+                    _autosaveTimer.Start();
                 };
         }
 
@@ -470,7 +479,7 @@ namespace NPPLPrintMaster
             Panel inspector = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 180,
+                Height = 218,
                 BackColor = _theme.ContentBg,
                 Padding = new Padding(0, 8, 0, 0)
             };
@@ -588,6 +597,14 @@ namespace NPPLPrintMaster
                 Height = 8
             };
 
+            Button bulkText = CreateButton("Update text in multiple cells...", 240, false);
+            bulkText.Dock = DockStyle.Top;
+            bulkText.Height = 34;
+            bulkText.Click += (s, e) => EditTextInMultipleCells();
+            _toolTip.SetToolTip(bulkText,
+                "Select image cells across all PDF pages and paste their text once.");
+
+            inspector.Controls.Add(bulkText);
             inspector.Controls.Add(actionRow);
             inspector.Controls.Add(noteRow);
             inspector.Controls.Add(remarkRow);
@@ -665,7 +682,9 @@ namespace NPPLPrintMaster
             _canvas.SelectionChanged += Canvas_SelectionChanged;
             _canvas.ViewChanged += (s, e) => RefreshView();
             _canvas.ImagesDropped += DropImages;
-            _canvas.RemoveRequested += path => UnplaceImages(new[] { path });
+            _canvas.RemoveRequested += UnplaceImages;
+            _canvas.EditSelectionRequested += EditSelectedText;
+            _canvas.PendingEditChanged += (s, e) => QueueAutosave();
             _canvas.TextEdited += ApplyEditedText;
             _canvas.FilesDropped += AddImages;
 
@@ -826,6 +845,7 @@ namespace NPPLPrintMaster
                     ResultDisplayMode =
                         IndexToDisplayMode(_displayModeCombo.SelectedIndex);
                     _canvas.DisplayMode = ResultDisplayMode;
+                    QueueAutosave();
                 };
             _toolTip.SetToolTip(
                 _displayModeCombo,
@@ -848,6 +868,7 @@ namespace NPPLPrintMaster
                         CollagePageSetup.CaptionFontChoices[
                             _textSizeCombo.SelectedIndex];
                     _dirty = true;
+                    QueueAutosave();
                     _canvas.Invalidate();
                 };
             _toolTip.SetToolTip(
@@ -981,7 +1002,7 @@ namespace NPPLPrintMaster
             Panel footer = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 58,
+                Height = 78,
                 BackColor = _theme.ContentBg,
                 Padding = new Padding(14, 10, 12, 10)
             };
@@ -1007,14 +1028,17 @@ namespace NPPLPrintMaster
             _statusLabel.Height = 19;
 
             Label tips = CreateLabel(
-                "Drag an image to another cell or page  •  Shift + drop inserts  •  " +
-                "double-click an image to edit its remark  •  Delete takes it off the page",
+                "Ctrl+click: toggle cells  •  Shift+click: select range  •  Ctrl+A: all pages  •  F2: edit selected text",
                 8.25f,
                 FontStyle.Regular,
                 _theme.MutedTextColor);
             tips.Dock = DockStyle.Top;
             tips.Height = 19;
 
+            _autosaveLabel = CreateLabel(_autosaveStatus, 8.25f, FontStyle.Regular, _theme.MutedTextColor);
+            _autosaveLabel.Dock = DockStyle.Top;
+            _autosaveLabel.Height = 19;
+            statusPanel.Controls.Add(_autosaveLabel);
             statusPanel.Controls.Add(tips);
             statusPanel.Controls.Add(_statusLabel);
 
@@ -1056,6 +1080,11 @@ namespace NPPLPrintMaster
         private ContextMenuStrip CreateArrangeMenu()
         {
             ContextMenuStrip menu = new ContextMenuStrip();
+
+            menu.Items.Add("Select all image cells (Ctrl+A)").Click += (s, e) => _canvas.SelectAllCells(false);
+            menu.Items.Add("Select image cells on current page").Click += (s, e) => _canvas.SelectAllCells(true);
+            menu.Items.Add("Clear cell selection").Click += (s, e) => _canvas.ClearCellSelection();
+            menu.Items.Add(new ToolStripSeparator());
 
             ToolStripItem fill = menu.Items.Add("Place all unplaced images");
             fill.Click +=
@@ -1216,8 +1245,7 @@ namespace NPPLPrintMaster
             edit.Click +=
                 (s, e) =>
                 {
-                    if (_canvas.SelectedPath != null)
-                        _canvas.BeginEdit(_canvas.SelectedPath, false);
+                    EditSelectedText(false);
                 };
 
             ToolStripMenuItem editNote =
@@ -1228,8 +1256,7 @@ namespace NPPLPrintMaster
             editNote.Click +=
                 (s, e) =>
                 {
-                    if (_canvas.SelectedPath != null)
-                        _canvas.BeginEdit(_canvas.SelectedPath, true);
+                    EditSelectedText(true);
                 };
 
             ToolStripMenuItem remove =
@@ -1240,8 +1267,7 @@ namespace NPPLPrintMaster
             remove.Click +=
                 (s, e) =>
                 {
-                    if (_canvas.SelectedPath != null)
-                        UnplaceImages(new[] { _canvas.SelectedPath });
+                    UnplaceImages(_canvas.SelectedPaths);
                 };
 
             ToolStripMenuItem locate = new ToolStripMenuItem("Show in library");
@@ -1494,8 +1520,12 @@ namespace NPPLPrintMaster
 
             _subtitleLabel.Text = DescribePage();
 
+            _inspected.RemoveAll(p => !_model.Contains(p));
+            _inspectedSet.Clear();
+            _inspectedSet.UnionWith(_inspected);
             RefreshLibrary();
             _canvas.OnModelChanged();
+            _canvas.SelectPaths(_inspected);
             _navigator.OnModelChanged();
             RefreshView();
             RefreshInspector();
@@ -1818,6 +1848,7 @@ namespace NPPLPrintMaster
                     _inspected.Add(path);
             }
 
+            _canvas.SelectPaths(_inspected);
             RefreshInspector();
             _navigator.Invalidate();
         }
@@ -1843,17 +1874,21 @@ namespace NPPLPrintMaster
 
         private void Canvas_SelectionChanged(object sender, EventArgs e)
         {
-            string path = _canvas.SelectedPath;
+            IList<string> paths = _canvas.SelectedPaths;
+            _library.SelectMany(paths);
+            SetInspected(paths);
+        }
 
-            if (path == null)
-                return;
-
-            if (_library.Contains(path))
-                _library.SelectSingle(path, true);
-            else
-                _library.ClearSelection();
-
-            SetInspected(new[] { path });
+        private void EditSelectedText(bool note)
+        {
+            if (_inspected.Count > 1)
+            {
+                TextBox box = note ? _noteBox : _remarkBox;
+                box.Focus();
+                box.SelectAll();
+            }
+            else if (_canvas.SelectedPath != null)
+                _canvas.BeginEdit(_canvas.SelectedPath, note);
         }
 
         private void SetFilter(LibraryFilter filter)
@@ -1890,14 +1925,9 @@ namespace NPPLPrintMaster
             if (placedAt < 0)
                 return;
 
-            string first = _model.GetSlot(placedAt);
-
             _canvas.SelectSlot(placedAt, false);
-
-            if (_library.Contains(first))
-                _library.SelectSingle(first, false);
-
-            SetInspected(new[] { first });
+            _library.SelectMany(paths);
+            SetInspected(paths.Where(_model.IsPlaced));
         }
 
         private void UnplaceImages(IList<string> paths)
@@ -2117,6 +2147,72 @@ namespace NPPLPrintMaster
             };
         }
 
+        private void QueueAutosave()
+        {
+            _dirty = true;
+            _autosavePending = true;
+            if (_autosaveLabel != null) _autosaveLabel.Text = "Changes pending autosave...";
+        }
+
+        private CollageLayout BuildRecoveryLayout()
+        {
+            CollageLayout layout = BuildLayout();
+            // Recovery includes intentional trailing empty pages as well.
+            layout.Slots = _model.Capture().Slots.ToList();
+            Action<string, bool, string> capture = (path, note, text) =>
+            {
+                if (!_model.Contains(path)) return;
+                string value = (text ?? string.Empty).Trim();
+                var values = note ? layout.Notes : layout.Remarks;
+                if (value.Length == 0 || (!note && value == CollageArrangementModel.GetFileTitle(path)))
+                    values.Remove(path);
+                else values[path] = value;
+            };
+            // Snapshot unfinished typing without committing it to the live
+            // model or adding undo steps merely because the timer fired.
+            foreach (string path in _editTargets)
+            {
+                if (_remarkBox.Modified) capture(path, false, _remarkBox.Text);
+                if (_noteBox.Modified) capture(path, true, _noteBox.Text);
+            }
+            _canvas.CapturePendingText(capture);
+            return layout;
+        }
+
+        private bool SaveRecoveryDraft(bool force)
+        {
+            if (!_autosavePending && !force) return true;
+            try
+            {
+                CollageRecoveryStore.Save(BuildRecoveryLayout(), _recoveryPath);
+                _autosavePending = false;
+                _autosaveStatus = "Autosaved locally at " + DateTime.Now.ToString("HH:mm:ss");
+                if (_autosaveLabel != null)
+                {
+                    _autosaveLabel.Text = _autosaveStatus;
+                    _toolTip.SetToolTip(_autosaveLabel, _recoveryPath);
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _autosavePending = true;
+                if (_autosaveLabel != null)
+                {
+                    _autosaveLabel.Text = "Autosave failed - use Arrange > Save layout to a file";
+                    _toolTip.SetToolTip(_autosaveLabel, ex.Message);
+                }
+                return false;
+            }
+        }
+
+        private void DeleteRecoveryDraft()
+        {
+            try { CollageRecoveryStore.Delete(_recoveryPath); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
         // Saves the arrangement as it is now, so it can be imported later
         // from the Image Collage Builder without creating a PDF first.
         private void SaveLayoutToFile()
@@ -2183,6 +2279,7 @@ namespace NPPLPrintMaster
         // keystroke cannot overwrite a whole selection.
         private void RemarkBox_TextChanged(object sender, EventArgs e)
         {
+            if (!_updatingRemark) QueueAutosave();
             if (_updatingRemark || _editTargets.Count != 1)
                 return;
 
@@ -2207,6 +2304,7 @@ namespace NPPLPrintMaster
 
         private void NoteBox_TextChanged(object sender, EventArgs e)
         {
+            if (!_updatingRemark) QueueAutosave();
             if (_updatingRemark || _editTargets.Count != 1)
                 return;
 
@@ -2241,19 +2339,35 @@ namespace NPPLPrintMaster
 
         private int ApplyTextToImages(IList<string> paths, bool note, string text)
         {
-            string value = (text ?? string.Empty).Trim();
+            return ApplyTextToCells(paths,
+                note ? null : text ?? string.Empty,
+                note ? text ?? string.Empty : null);
+        }
+
+        // Null leaves a field alone; an empty string explicitly resets/clears it.
+        // Both lines and every selected page belong to one undo operation.
+        private int ApplyTextToCells(IList<string> paths, string remark, string note)
+        {
+            if (remark == null && note == null)
+                return 0;
+
+            remark = remark == null ? null : remark.Trim();
+            note = note == null ? null : note.Trim();
 
             List<string> changing =
                 paths
+                    .Where(_model.Contains)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Where(
-                        p => !string.Equals(
-                            value,
-                            note
-                                ? _model.GetNote(p) ?? string.Empty
-                                : value.Length == 0
+                        p => (remark != null && !string.Equals(
+                            remark,
+                            remark.Length == 0
                                     ? _model.GetRemark(p) ?? string.Empty
                                     : _model.GetEffectiveRemark(p),
-                            StringComparison.Ordinal))
+                            StringComparison.Ordinal)) ||
+                            (note != null && !string.Equals(
+                                note, _model.GetNote(p) ?? string.Empty,
+                                StringComparison.Ordinal)))
                     .ToList();
 
             if (changing.Count == 0)
@@ -2266,10 +2380,10 @@ namespace NPPLPrintMaster
             {
                 foreach (string path in changing)
                 {
-                    if (note)
-                        _model.SetNote(path, value);
-                    else
-                        _model.SetRemark(path, value);
+                    if (remark != null)
+                        _model.SetRemark(path, remark);
+                    if (note != null)
+                        _model.SetNote(path, note);
                 }
             }
             finally
@@ -2277,10 +2391,142 @@ namespace NPPLPrintMaster
                 _model.EndUpdate();
             }
 
-            if (value.Length > 0)
+            if (!string.IsNullOrEmpty(remark) || !string.IsNullOrEmpty(note))
                 ShowRemarksIfHidden();
 
             return changing.Count;
+        }
+
+        private void EditTextInMultipleCells()
+        {
+            List<string> paths = Enumerable.Range(0, _model.SlotCount)
+                .Select(_model.GetSlot).Where(p => p != null).ToList();
+            if (paths.Count == 0)
+            {
+                MessageBox.Show(this, "Place images on the pages first.", "Update cell text");
+                return;
+            }
+
+            using (Form dialog = new Form
+            {
+                Text = "Update text in multiple cells",
+                Size = new Size(700, 640), MinimumSize = new Size(600, 560),
+                StartPosition = FormStartPosition.CenterParent,
+                Font = Font, BackColor = _theme.ContentBg, ForeColor = _theme.TextColor,
+                MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false
+            })
+            {
+                var layout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 1, RowCount = 7
+                };
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+                foreach (float height in new[] { 42f, 38f, 0f, 26f, 58f, 58f, 42f })
+                    layout.RowStyles.Add(height == 0
+                        ? new RowStyle(SizeType.Percent, 100)
+                        : new RowStyle(SizeType.Absolute, height));
+
+                layout.Controls.Add(new Label { Dock = DockStyle.Fill,
+                    Text = "Tick the image cells to update across any page. Paste text once below.\nOnly checked cells and checked text fields will change." }, 0, 0);
+                var selection = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+                var cells = new CheckedListBox
+                {
+                    Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false,
+                    HorizontalScrollbar = true, BackColor = _theme.ControlBg, ForeColor = _theme.TextColor
+                };
+                bool hasSelection = paths.Any(_inspectedSet.Contains);
+                foreach (string path in paths)
+                {
+                    int slot = _model.IndexOf(path);
+                    cells.Items.Add("Page " + (slot / _model.CellsPerPage + 1) +
+                        " / Cell " + (slot % _model.CellsPerPage + 1) + "  -  " + Path.GetFileName(path),
+                        hasSelection && _inspectedSet.Contains(path));
+                }
+                var countLabel = new Label { Dock = DockStyle.Fill };
+                var apply = CreateButton("Apply text", 110, true);
+                var updateRemark = new CheckBox { Text = "Update Remark", AutoSize = true, Checked = true };
+                var updateNote = new CheckBox { Text = "Update Remark 2", AutoSize = true };
+                var remarkBox = new TextBox { Dock = DockStyle.Fill };
+                var noteBox = new TextBox { Dock = DockStyle.Fill, Enabled = false };
+                var initiallySelected = paths.Where(p => hasSelection && _inspectedSet.Contains(p)).ToList();
+                if (initiallySelected.Count > 0)
+                {
+                    remarkBox.Text = SharedText(initiallySelected, _model.GetEffectiveRemark);
+                    noteBox.Text = SharedText(initiallySelected, p => _model.GetNote(p) ?? string.Empty);
+                }
+                Action refresh = () =>
+                {
+                    countLabel.Text = cells.CheckedItems.Count + " of " + paths.Count + " image cells selected";
+                    apply.Enabled = cells.CheckedItems.Count > 0 && (updateRemark.Checked || updateNote.Checked);
+                };
+                bool selectingMany = false;
+                cells.ItemCheck += (s, e) =>
+                {
+                    if (selectingMany) return;
+                    int count = cells.CheckedItems.Count +
+                        (e.NewValue == CheckState.Checked ? 1 : 0) -
+                        (e.CurrentValue == CheckState.Checked ? 1 : 0);
+                    countLabel.Text = count + " of " + paths.Count + " image cells selected";
+                    apply.Enabled = count > 0 && (updateRemark.Checked || updateNote.Checked);
+                };
+                updateRemark.CheckedChanged += (s, e) => { remarkBox.Enabled = updateRemark.Checked; refresh(); };
+                updateNote.CheckedChanged += (s, e) => { noteBox.Enabled = updateNote.Checked; refresh(); };
+                foreach (string caption in new[] { "Select all pages", "Select current page", "Clear selection" })
+                {
+                    string action = caption;
+                    Button button = CreateButton(caption, 145, false);
+                    button.Click += (s, e) =>
+                    {
+                        cells.BeginUpdate();
+                        selectingMany = true;
+                        try
+                        {
+                            for (int i = 0; i < paths.Count; i++)
+                                cells.SetItemChecked(i, action == "Select all pages" ||
+                                    (action == "Select current page" &&
+                                    _model.IndexOf(paths[i]) / _model.CellsPerPage == _canvas.CurrentPage));
+                        }
+                        finally { selectingMany = false; cells.EndUpdate(); }
+                        refresh();
+                    };
+                    selection.Controls.Add(button);
+                }
+                layout.Controls.Add(selection, 0, 1);
+                layout.Controls.Add(cells, 0, 2);
+                layout.Controls.Add(countLabel, 0, 3);
+                var remarkPanel = new Panel { Dock = DockStyle.Fill };
+                updateRemark.Dock = DockStyle.Top;
+                remarkBox.Dock = DockStyle.Bottom;
+                remarkPanel.Controls.Add(remarkBox);
+                remarkPanel.Controls.Add(updateRemark);
+                layout.Controls.Add(remarkPanel, 0, 4);
+                var notePanel = new Panel { Dock = DockStyle.Fill };
+                updateNote.Dock = DockStyle.Top;
+                noteBox.Dock = DockStyle.Bottom;
+                notePanel.Controls.Add(noteBox);
+                notePanel.Controls.Add(updateNote);
+                layout.Controls.Add(notePanel, 0, 5);
+                var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+                Button cancel = CreateButton("Cancel", 90, false);
+                cancel.DialogResult = DialogResult.Cancel;
+                footer.Controls.Add(cancel);
+                footer.Controls.Add(apply);
+                layout.Controls.Add(footer, 0, 6);
+                dialog.Controls.Add(layout);
+                dialog.CancelButton = cancel;
+                apply.Click += (s, e) =>
+                {
+                    var targets = cells.CheckedIndices.Cast<int>().Select(i => paths[i]).ToList();
+                    ApplyTextToCells(targets, updateRemark.Checked ? remarkBox.Text : null,
+                        updateNote.Checked ? noteBox.Text : null);
+                    dialog.DialogResult = DialogResult.OK;
+                    dialog.Close();
+                };
+                _toolTip.SetToolTip(remarkBox, "Empty text restores the file name as the remark.");
+                _toolTip.SetToolTip(noteBox, "Empty text removes Remark 2 from checked cells.");
+                refresh();
+                dialog.ShowDialog(this);
+            }
         }
 
         // Text typed directly on the page: the remark, or the additional
@@ -2573,7 +2819,7 @@ namespace NPPLPrintMaster
         // ------------------------------------------------------------
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            bool typing = ActiveControl is TextBoxBase;
+            bool typing = ActiveControl is TextBoxBase || _canvas.IsEditing;
 
             if (keyData == (Keys.Control | Keys.F))
             {
@@ -2598,6 +2844,13 @@ namespace NPPLPrintMaster
 
             switch (keyData)
             {
+                case Keys.Control | Keys.A:
+                    if (_canvas.ContainsFocus)
+                    {
+                        _canvas.SelectAllCells(false);
+                        return true;
+                    }
+                    break;
                 case Keys.Control | Keys.Z:
                     Undo();
                     return true;
@@ -2624,6 +2877,9 @@ namespace NPPLPrintMaster
 
         private void AcceptArrangement()
         {
+            _canvas.CommitEdit();
+            CommitBulkText(_remarkBox);
+            CommitBulkText(_noteBox);
             if (_model.PlacedCount == 0)
             {
                 MessageBox.Show(
@@ -2655,26 +2911,49 @@ namespace NPPLPrintMaster
         {
             base.OnFormClosing(e);
 
-            if (e.Cancel || _accepted || !_dirty)
+            if (e.Cancel) return;
+            _canvas.CommitEdit();
+            CommitBulkText(_remarkBox);
+            CommitBulkText(_noteBox);
+            if (_accepted || e.CloseReason == CloseReason.WindowsShutDown ||
+                e.CloseReason == CloseReason.ApplicationExitCall || e.CloseReason == CloseReason.TaskManagerClosing)
+            {
+                SaveRecoveryDraft(true);
                 return;
+            }
+            if (!_dirty)
+            {
+                DeleteRecoveryDraft();
+                return;
+            }
 
             DialogResult answer =
                 MessageBox.Show(
                     this,
-                    "Discard the changes made to this arrangement?",
+                    "Save a recovery draft before closing?\n\n" +
+                    "Yes: keep your changes for recovery.\nNo: discard this draft.\nCancel: continue editing.",
                     "Arrange Images",
-                    MessageBoxButtons.YesNo,
+                    MessageBoxButtons.YesNoCancel,
                     MessageBoxIcon.Question,
-                    MessageBoxDefaultButton.Button2);
+                    MessageBoxDefaultButton.Button1);
 
-            if (answer != DialogResult.Yes)
+            if (answer == DialogResult.Cancel)
                 e.Cancel = true;
+            else if (answer == DialogResult.No)
+                DeleteRecoveryDraft();
+            else if (!SaveRecoveryDraft(true))
+            {
+                e.Cancel = true;
+                MessageBox.Show(this, "The recovery draft could not be saved. Please save the layout to a file before closing.",
+                    "Autosave", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
+                _autosaveTimer.Dispose();
                 _thumbnails.Dispose();
 
                 if (_toolTip != null)
