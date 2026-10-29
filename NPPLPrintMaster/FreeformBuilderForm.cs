@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -51,7 +51,7 @@ namespace NPPLPrintMaster
     // ============================================================
     // FREEFORM BUILDER
     // ============================================================
-    public class FreeformBuilderForm : Form
+    public class FreeformBuilderForm : BrandedForm
     {
         // ========================================================
         // CONSTANTS
@@ -2506,7 +2506,7 @@ namespace NPPLPrintMaster
                 {
                     using (
                         Form prompt =
-                            new Form())
+                            new BrandedForm())
                     {
                         prompt.Width =
                             450;
@@ -5627,7 +5627,7 @@ namespace NPPLPrintMaster
         {
             using (
                 Form managerForm =
-                    new Form())
+                    new BrandedForm())
             {
                 managerForm.Text =
                     "Manage Text Library";

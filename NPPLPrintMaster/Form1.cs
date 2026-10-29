@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -11,7 +11,7 @@ namespace NPPLPrintMaster
     // ==========================================
     // STANDALONE JOB CARD PREVIEW WINDOW
     // ==========================================
-    public class JobCardPreviewForm : Form
+    public class JobCardPreviewForm : BrandedForm
     {
         private PictureBox pbPreview;
         private Button btnSave, btnCustomize, btnClose;
@@ -283,7 +283,7 @@ namespace NPPLPrintMaster
         }
     }
 
-    public partial class Form1 : Form
+    public partial class Form1 : BrandedForm
     {
         private TextBox txtSource1, txtExport1;
         private NumericUpDown numDpi;
@@ -469,19 +469,13 @@ namespace NPPLPrintMaster
             sidebarSplitter = new Splitter { Dock = DockStyle.Left, Width = 3, Cursor = Cursors.VSplit };
 
             pnlLogo = new Panel { Dock = DockStyle.Top, Height = 80 };
-            string logoPath = Path.Combine(Application.StartupPath, "logo.png");
-            if (File.Exists(logoPath))
             {
-                PictureBox picLogo = new PictureBox { Image = Image.FromFile(logoPath), SizeMode = PictureBoxSizeMode.Zoom, Dock = DockStyle.Fill };
-                pnlLogo.Controls.Add(picLogo);
-            }
-            else
-            {
+                pnlLogo.Controls.Add(AppBranding.CreateLogo(new Rectangle(14, 15, 52, 52)));
                 lblAppTitle = new Label
                 {
                     Text = "NPPL",
-                    Font = new Font("Segoe UI Black", 22, FontStyle.Bold),
-                    Location = new Point(15, 15),
+                    Font = new Font("Segoe UI Black", 18, FontStyle.Bold),
+                    Location = new Point(76, 14),
                     AutoSize = true
                 };
 
@@ -489,7 +483,7 @@ namespace NPPLPrintMaster
                 {
                     Text = "PRINT MASTER",
                     Font = new Font("Segoe UI", 9, FontStyle.Regular),
-                    Location = new Point(18, 55),
+                    Location = new Point(78, 48),
                     AutoSize = true
                 };
 

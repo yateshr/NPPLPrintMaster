@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace NPPLPrintMaster
 {
-    public sealed class SmartImageInspectorForm : Form
+    public sealed class SmartImageInspectorForm : BrandedForm
     {
         private readonly string filePath;
         private readonly Panel viewport;

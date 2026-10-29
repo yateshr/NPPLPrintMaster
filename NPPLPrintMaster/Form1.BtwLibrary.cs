@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 #pragma warning disable IDE0270
 #pragma warning disable IDE0060
 #pragma warning disable IDE0059
@@ -20,7 +20,7 @@ using System.Windows.Forms;
 
 namespace NPPLPrintMaster
 {
-    public partial class Form1 : Form
+    public partial class Form1 : BrandedForm
     {
         private BtwImageLibraryEngine btwImageLibraryEngine;
 
@@ -2817,7 +2817,7 @@ namespace NPPLPrintMaster
                 !File.Exists(selectedBtwLibraryImage))
                 return;
 
-            Form preview = new Form
+            Form preview = new BrandedForm
             {
                 Text = "BTW Image Preview",
                 StartPosition = FormStartPosition.CenterParent,
@@ -3048,7 +3048,7 @@ namespace NPPLPrintMaster
             Color inputText =
                 ThemeManager.GetContrastTextColor(inputBack);
 
-            using (Form dialog = new Form())
+            using (Form dialog = new BrandedForm())
             {
                 dialog.Text = "BTW Image Library Settings";
                 dialog.StartPosition = FormStartPosition.CenterParent;

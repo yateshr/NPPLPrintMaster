@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace NPPLPrintMaster
 {
-    public sealed class FailedBarcodeInspectorForm : Form
+    public sealed class FailedBarcodeInspectorForm : BrandedForm
     {
         private readonly ListBox list = new ListBox();
         private readonly PictureBox preview = new PictureBox();

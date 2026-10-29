@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -18,7 +18,7 @@ namespace NPPLPrintMaster
     /// The selected grid stays fixed. Images that are not on a page remain in
     /// the library as "not placed" and are left out of the PDF.
     /// </summary>
-    public sealed class CollageArrangementForm : Form
+    public sealed class CollageArrangementForm : BrandedForm
     {
         private enum LibraryFilter
         {
@@ -2461,7 +2461,7 @@ namespace NPPLPrintMaster
                 return;
             }
 
-            using (Form dialog = new Form
+            using (Form dialog = new BrandedForm
             {
                 Text = "Update text in multiple cells",
                 Size = new Size(700, 640), MinimumSize = new Size(600, 560),

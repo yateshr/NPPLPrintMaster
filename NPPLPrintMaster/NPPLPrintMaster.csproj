@@ -11,6 +11,7 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace>NPPLPrintMaster</RootNamespace>
     <AssemblyName>NPPLPrintMaster</AssemblyName>
+    <ApplicationIcon>Branding\PrintMaster.ico</ApplicationIcon>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -165,6 +166,7 @@
     </Compile>
     <Compile Include="HelpViewer.cs" />
     <Compile Include="AppUpdateService.cs" />
+    <Compile Include="AppBranding.cs" />
     <Compile Include="Form1.Updates.cs" />
     <Compile Include="ImageCollageEngine.cs" />
     <Compile Include="CollagePdfRenderer.cs" />
@@ -215,6 +217,12 @@
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
       <SubType>Designer</SubType>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Branding\PrintMaster.ico">
+      <LogicalName>NPPLPrintMaster.Branding.PrintMaster.ico</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Branding\PrintMaster.png">
+      <LogicalName>NPPLPrintMaster.Branding.PrintMaster.png</LogicalName>
     </EmbeddedResource>
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>

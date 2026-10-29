@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace NPPLPrintMaster
 {
-    public partial class Form1 : Form
+    public partial class Form1 : BrandedForm
     {
         private async void BtnRunBlock2_Click(object sender, EventArgs e)
         {

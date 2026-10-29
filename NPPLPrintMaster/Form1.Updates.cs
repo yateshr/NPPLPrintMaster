@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Threading;
@@ -51,10 +51,11 @@ namespace NPPLPrintMaster
         private void ShowUpdates()
         {
             if (updatesWindow != null && !updatesWindow.IsDisposed) { updatesWindow.Activate(); return; }
-            updatesWindow = new Form { Text = "Software Updates", Size = new Size(580, 390), MinimumSize = new Size(580, 390),
+            updatesWindow = new BrandedForm { Text = "Software Updates", Size = new Size(580, 390), MinimumSize = new Size(580, 390),
                 StartPosition = FormStartPosition.CenterParent, Font = new Font("Segoe UI", 10), BackColor = Color.White, MaximizeBox = false };
-            var title = new Label { Text = availableRelease == null ? "Keep PrintMaster up to date" : "Update available", Font = new Font("Segoe UI", 17, FontStyle.Bold), AutoSize = true, Location = new Point(24, 24) };
-            var version = new Label { Text = "Installed version: " + AppUpdateService.CurrentVersion, AutoSize = true, Location = new Point(26, 74) };
+            updatesWindow.Controls.Add(AppBranding.CreateLogo(new Rectangle(24, 22, 48, 48)));
+            var title = new Label { Text = availableRelease == null ? "Keep PrintMaster up to date" : "Update available", Font = new Font("Segoe UI", 17, FontStyle.Bold), AutoSize = true, Location = new Point(84, 21) };
+            var version = new Label { Text = "Installed version: " + AppUpdateService.CurrentVersion, AutoSize = true, Location = new Point(86, 60) };
             updatesStatus = new Label { Location = new Point(26, 112), Size = new Size(510, 55) };
             updateProgress = new ProgressBar { Location = new Point(26, 174), Size = new Size(510, 18) };
             checkUpdatesButton = new Button { Text = "Check for updates", Location = new Point(26, 214), Size = new Size(155, 40) };

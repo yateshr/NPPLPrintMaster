@@ -78,7 +78,7 @@ namespace NPPLPrintMaster
             }
 
             // 5. Open a popup window to display the styled Markdown
-            Form docForm = new Form
+            Form docForm = new BrandedForm
             {
                 Text = title,
                 Size = new Size(800, 600),

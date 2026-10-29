@@ -33,9 +33,7 @@ namespace NPPLPrintMaster
         private void BuildModernChrome()
         {
             modernBrand = new Panel { Dock = DockStyle.Top, Height = 90, BackColor = InterfaceAppearance.ModernTheme().SidebarColor };
-            modernBrand.Controls.Add(new Label { Text = "NPPL", Location = new Point(18, 23), Size = new Size(38, 38),
-                BackColor = Color.FromArgb(0, 135, 90), ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter });
+            modernBrand.Controls.Add(AppBranding.CreateLogo(new Rectangle(16, 19, 46, 46)));
             modernBrand.Controls.Add(new Label { Text = "PrintMaster", Location = new Point(66, 22), Size = new Size(150, 28),
                 ForeColor = Color.White, Font = new Font("Segoe UI", 13, FontStyle.Bold) });
             modernBrand.Controls.Add(new Label { Text = "PRODUCTION WORKSPACE", Location = new Point(67, 50), Size = new Size(150, 18),

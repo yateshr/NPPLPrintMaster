@@ -1,10 +1,10 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Windows.Forms;
 
 namespace NPPLPrintMaster
 {
-    internal sealed class CollagePaperSetupForm : Form
+    internal sealed class CollagePaperSetupForm : BrandedForm
     {
         private readonly ComboBox _paper = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
         private readonly ComboBox _orientation = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
