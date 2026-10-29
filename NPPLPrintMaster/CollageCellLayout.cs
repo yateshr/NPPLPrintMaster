@@ -17,10 +17,6 @@ namespace NPPLPrintMaster
     /// </summary>
     internal sealed class CollageCellLayout
     {
-        // A4 in PDF points.
-        public const float PageShortSidePoints = 595.2756f;
-        public const float PageLongSidePoints = 841.8898f;
-
         public const float OuterMarginPoints = 20f;
         public const float InnerMarginPoints = 10f;
         public const float CaptionGapPoints = 4f;

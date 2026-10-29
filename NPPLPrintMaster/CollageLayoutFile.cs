@@ -45,6 +45,32 @@ namespace NPPLPrintMaster
         public int Columns = 2;
         public int Rows = 2;
         public bool Landscape;
+        public string PaperSize = "A4";
+        public float CustomWidthMm = 210;
+        public float CustomHeightMm = 297;
+        public const float MinCustomSideMm = 50;
+        public const float MaxCustomSideMm = 2000;
+
+        private float ShortSideMm
+        {
+            get { return PaperSize == "A3" ? 297 : PaperSize == "A2" ? 420 :
+                PaperSize == "Custom" ? Math.Min(CustomWidthMm, CustomHeightMm) : 210; }
+        }
+        private float LongSideMm
+        {
+            get { return PaperSize == "A3" ? 420 : PaperSize == "A2" ? 594 :
+                PaperSize == "Custom" ? Math.Max(CustomWidthMm, CustomHeightMm) : 297; }
+        }
+        public float WidthMm { get { return Landscape ? LongSideMm : ShortSideMm; } }
+        public float HeightMm { get { return Landscape ? ShortSideMm : LongSideMm; } }
+        public float WidthPoints { get { return WidthMm * 72f / 25.4f; } }
+        public float HeightPoints { get { return HeightMm * 72f / 25.4f; } }
+        public string PaperDescription
+        {
+            get { return PaperSize + " " + (Landscape ? "Landscape" : "Portrait") + " (" +
+                WidthMm.ToString("0.##", CultureInfo.InvariantCulture) + " x " +
+                HeightMm.ToString("0.##", CultureInfo.InvariantCulture) + " mm)"; }
+        }
         public bool DrawBorders;
 
         // Size of the text printed under each image.
@@ -81,6 +107,10 @@ namespace NPPLPrintMaster
         // supported range.
         public void Normalize()
         {
+            string paper = (PaperSize ?? "A4").Trim().ToUpperInvariant();
+            PaperSize = paper == "CUSTOM" ? "Custom" : paper == "A3" || paper == "A2" ? paper : "A4";
+            CustomWidthMm = NormalizeSide(CustomWidthMm, 210);
+            CustomHeightMm = NormalizeSide(CustomHeightMm, 297);
             Columns = Math.Max(1, Math.Min(MaxColumns, Columns));
             Rows = Math.Max(1, Math.Min(MaxRows, Rows));
 
@@ -92,6 +122,12 @@ namespace NPPLPrintMaster
             }
 
             HeaderText = (HeaderText ?? string.Empty).Trim();
+        }
+
+        private static float NormalizeSide(float value, float fallback)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value) ? fallback :
+                Math.Max(MinCustomSideMm, Math.Min(MaxCustomSideMm, value));
         }
     }
 
@@ -189,7 +225,10 @@ namespace NPPLPrintMaster
             XElement root =
                 new XElement(
                     RootName,
-                    new XAttribute("version", 2),
+                    new XAttribute("version", 3),
+                    new XAttribute("paper", page.PaperSize),
+                    new XAttribute("customWidthMm", page.CustomWidthMm.ToString("0.##", CultureInfo.InvariantCulture)),
+                    new XAttribute("customHeightMm", page.CustomHeightMm.ToString("0.##", CultureInfo.InvariantCulture)),
                     new XAttribute("columns", page.Columns),
                     new XAttribute("rows", page.Rows),
                     new XAttribute(
@@ -272,6 +311,9 @@ namespace NPPLPrintMaster
             CollagePageSetup page =
                 new CollagePageSetup
                 {
+                    PaperSize = (string)root.Attribute("paper") ?? "A4",
+                    CustomWidthMm = ReadMillimeters(root, "customWidthMm", 210),
+                    CustomHeightMm = ReadMillimeters(root, "customHeightMm", 297),
                     Columns = ReadInt(root, "columns", square),
                     Rows = ReadInt(root, "rows", square),
                     Landscape =
@@ -579,6 +621,13 @@ namespace NPPLPrintMaster
         // ------------------------------------------------------------
         // Helpers
         // ------------------------------------------------------------
+        private static float ReadMillimeters(XElement root, string name, float fallback)
+        {
+            float value;
+            return float.TryParse((string)root.Attribute(name), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out value) ? value : fallback;
+        }
+
         private static string ResolveImagePath(
             string savedPath,
             string relativePath,

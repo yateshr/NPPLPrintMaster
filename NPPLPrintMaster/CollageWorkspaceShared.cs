@@ -71,8 +71,9 @@ namespace NPPLPrintMaster
     {
         private const int ArrowAreaWidth = 20;
 
-        private readonly ThemeColors _theme;
+        private ThemeColors _theme;
         private bool _hovered;
+        public bool RoundedAppearance { get; set; }
 
         public CollageThemedComboBox(ThemeColors theme)
         {
@@ -93,6 +94,14 @@ namespace NPPLPrintMaster
                 true);
         }
 
+        public void SetTheme(ThemeColors theme)
+        {
+            _theme = theme;
+            BackColor = theme.ControlBg;
+            ForeColor = theme.TextColor;
+            Invalidate();
+        }
+
         // The closed field.
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -106,8 +115,14 @@ namespace NPPLPrintMaster
                         ? _theme.ButtonHover
                         : _theme.ControlBg;
 
-            using (Brush backBrush = new SolidBrush(back))
-                g.FillRectangle(backBrush, bounds);
+            if (RoundedAppearance)
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Parent == null ? back : Parent.BackColor);
+                using (var shape = CollageShapes.Rounded(new RectangleF(0.5f, 0.5f, bounds.Width - 1, bounds.Height - 1), 6))
+                using (var fill = new SolidBrush(back)) g.FillPath(fill, shape);
+            }
+            else using (Brush backBrush = new SolidBrush(back)) g.FillRectangle(backBrush, bounds);
 
             Rectangle textBounds =
                 new Rectangle(
@@ -148,7 +163,9 @@ namespace NPPLPrintMaster
             using (Pen border =
                 new Pen(Focused ? _theme.ActiveColor : _theme.BorderColor))
             {
-                g.DrawRectangle(
+                if (RoundedAppearance)
+                    using (var shape = CollageShapes.Rounded(new RectangleF(0.5f, 0.5f, bounds.Width - 1, bounds.Height - 1), 6)) g.DrawPath(border, shape);
+                else g.DrawRectangle(
                     border,
                     bounds.X,
                     bounds.Y,

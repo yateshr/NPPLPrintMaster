@@ -318,6 +318,10 @@ namespace NPPLPrintMaster
         // Image Collage Builder
         private TextBox txtCollageSource, txtCollageOutput, txtCollageFileName;
         private ComboBox cmbCollageOutputType, cmbCollageColumns, cmbCollageRows, cmbCollageOrientation, cmbCollageTextSize;
+        private Button btnCollagePaper;
+        private CollagePageSetup collagePaperSetup = new CollagePageSetup();
+        private Button btnNavCollage;
+        private Panel pageCollage;
         private TextBox txtCollageHeader;
         private CheckBox chkCollageDate, chkCollagePageNumbers;
         private CheckBox chkCollageSubDirs, chkCollageShowFilename, chkCollageBorders, chkCollageAutoFileName;
@@ -399,7 +403,9 @@ namespace NPPLPrintMaster
                 AppearanceManager.NormalizeLayoutChoice(
                     currentSettings.LayoutStyle);
 
-            ApplyTheme(currentSettings.Theme);
+            // Saved preview preferences use the same Current UI fallback
+            // as an interactive switch, rather than blocking app startup.
+            ChangeInterfaceStyle();
             Logger.LogAction("APP_START", "NPPLPrintMaster Enterprise Edition launched.");
         }
 
@@ -440,10 +446,11 @@ namespace NPPLPrintMaster
 
             ToolStripMenuItem toolsMenu = new ToolStripMenuItem("Tools");
             ToolStripMenuItem standaloneBuilderItem = new ToolStripMenuItem("🎨 Pro Freeform Builder");
-            standaloneBuilderItem.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
+            standaloneBuilderItem.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(appSettings: currentSettings); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
             toolsMenu.DropDownItems.Add(standaloneBuilderItem);
 
             ToolStripMenuItem helpMenu = new ToolStripMenuItem("Help");
+            InitializeUpdates(helpMenu);
             var myDocuments = new Dictionary<string, string> {
                 { "FAQ & How to Use", "faq.md" }, { "License Agreement", "license.md" },
                 { "About & Version Info", "about.md" }, { "System Requirements", "requirements.md" },
@@ -525,10 +532,11 @@ namespace NPPLPrintMaster
             pageHome = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false };
             pageExtract = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
             pageFormat = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
+            pageCollage = new Panel { Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
             pageCompose = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
             pageBtwLibrary = new Panel { Size = new Size(1200, 900), Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
             pageSettings = new Panel { Size = new Size(1000, 800), Dock = DockStyle.Fill, Visible = false };
-            pnlContent.Controls.AddRange(new Control[] { pageHome, pageExtract, pageFormat, pageCompose, pageBtwLibrary, pageSettings });
+            pnlContent.Controls.AddRange(new Control[] { pageHome, pageExtract, pageFormat, pageCollage, pageCompose, pageBtwLibrary, pageSettings });
 
             Label lblWelcome = new Label { Text = "Workflow Automation Suite", Font = new Font("Segoe UI", 14), Location = new Point(0, 0), AutoSize = true };
             Label lblInstr = new Label { Text = "Use the sidebar on the left to navigate between extraction, formatting, and job card building.\n\nYou can drag the line next to the sidebar to shrink or expand it.", Font = new Font("Segoe UI", 11), Location = new Point(0, 40), AutoSize = true };
@@ -936,7 +944,7 @@ namespace NPPLPrintMaster
                 Text = "Select image files or a folder..."
             };
 
-            Button btnCollageFiles = new Button
+            Button btnCollageFiles = new CollageUiButton
             {
                 Text = "Files",
                 Location = new Point(380, 55),
@@ -963,7 +971,7 @@ namespace NPPLPrintMaster
                 }
             };
 
-            Button btnCollageFolder = new Button
+            Button btnCollageFolder = new CollageUiButton
             {
                 Text = "Folder",
                 Location = new Point(478, 55),
@@ -1016,7 +1024,7 @@ namespace NPPLPrintMaster
                     : currentSettings.DefaultExport2
             };
 
-            Button btnCollageOutput = new Button
+            Button btnCollageOutput = new CollageUiButton
             {
                 Text = "Browse",
                 Location = new Point(758, 55),
@@ -1058,10 +1066,10 @@ namespace NPPLPrintMaster
             chkCollageAutoFileName.CheckedChanged += (s, e) =>
             {
                 txtCollageFileName.Enabled = !chkCollageAutoFileName.Checked;
-                lblCollageFileName.Enabled = !chkCollageAutoFileName.Checked;
+                lblCollageFileName.Enabled = true;
             };
 
-            lblCollageFileName.Enabled = false;
+            lblCollageFileName.Enabled = true;
 
             // --------------------------------------------------------
             // Output settings
@@ -1082,7 +1090,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 9)
             };
 
-            cmbCollageOutputType = new ComboBox
+            cmbCollageOutputType = new CollageThemedComboBox(ThemeManager.GetTheme(currentSettings.Theme))
             {
                 Location = new Point(20, 182),
                 Size = new Size(150, 28),
@@ -1093,6 +1101,7 @@ namespace NPPLPrintMaster
             cmbCollageOutputType.SelectedIndexChanged += (s, e) =>
             {
                 UpdateCollageArrangementButtons();
+                if (btnCollagePaper != null) btnCollagePaper.Enabled = cmbCollageOutputType.SelectedIndex == 0;
             };
 
             Label lblCollageGrid = new Label
@@ -1107,7 +1116,7 @@ namespace NPPLPrintMaster
             // 2 x 3, 3 x 4 and so on. Changing the grid keeps a manual
             // arrangement: the images stay in order and flow into the new
             // grid.
-            cmbCollageColumns = new ComboBox
+            cmbCollageColumns = new CollageThemedComboBox(ThemeManager.GetTheme(currentSettings.Theme))
             {
                 Location = new Point(190, 182),
                 Size = new Size(66, 28),
@@ -1122,7 +1131,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 9)
             };
 
-            cmbCollageRows = new ComboBox
+            cmbCollageRows = new CollageThemedComboBox(ThemeManager.GetTheme(currentSettings.Theme))
             {
                 Location = new Point(274, 182),
                 Size = new Size(66, 28),
@@ -1146,7 +1155,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 9)
             };
 
-            cmbCollageOrientation = new ComboBox
+            cmbCollageOrientation = new CollageThemedComboBox(ThemeManager.GetTheme(currentSettings.Theme))
             {
                 Location = new Point(360, 182),
                 Size = new Size(150, 28),
@@ -1154,6 +1163,17 @@ namespace NPPLPrintMaster
             };
             cmbCollageOrientation.Items.AddRange(new object[] { "Portrait", "Landscape" });
             cmbCollageOrientation.SelectedIndex = 0;
+
+            btnCollagePaper = new CollageUiButton
+            {
+                Text = "Paper: A4 (PDF)...", Location = new Point(530, 181),
+                Size = new Size(298, 30), FlatStyle = FlatStyle.Flat
+            };
+            btnCollagePaper.Click += (s, e) =>
+            {
+                using (var dialog = new CollagePaperSetupForm(GetCollagePageSetup()))
+                    if (dialog.ShowDialog(this) == DialogResult.OK) ApplyCollagePageSetup(dialog.ResultPage);
+            };
 
             // --------------------------------------------------------
             // Display options
@@ -1192,7 +1212,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 9)
             };
 
-            cmbCollageTextSize = new ComboBox
+            cmbCollageTextSize = new CollageThemedComboBox(ThemeManager.GetTheme(currentSettings.Theme))
             {
                 Location = new Point(468, 250),
                 Size = new Size(64, 28),
@@ -1248,7 +1268,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 8)
             };
 
-            btnArrangeCollage = new Button
+            btnArrangeCollage = new CollageUiButton
             {
                 Text = "🖼  Arrange Images...",
                 Location = new Point(540, 226),
@@ -1259,7 +1279,7 @@ namespace NPPLPrintMaster
             btnArrangeCollage.FlatAppearance.BorderSize = 0;
             btnArrangeCollage.Click += BtnArrangeCollage_Click;
 
-            btnClearCollageArrangement = new Button
+            btnClearCollageArrangement = new CollageUiButton
             {
                 Text = "↺  Automatic",
                 Location = new Point(686, 226),
@@ -1273,7 +1293,7 @@ namespace NPPLPrintMaster
                 ResetManualCollageArrangement();
             };
 
-            btnImportCollageLayout = new Button
+            btnImportCollageLayout = new CollageUiButton
             {
                 Text = "📂  Import Layout / PDF to Edit...",
                 Location = new Point(20, 362),
@@ -1284,7 +1304,7 @@ namespace NPPLPrintMaster
             btnImportCollageLayout.FlatAppearance.BorderSize = 0;
             btnImportCollageLayout.Click += BtnImportCollageLayout_Click;
 
-            btnGenerateCollage = new Button
+            btnGenerateCollage = new CollageUiButton
             {
                 Text = "▶  Generate Collage",
                 Location = new Point(540, 294),
@@ -1304,7 +1324,7 @@ namespace NPPLPrintMaster
                 lblOutputSettings,
                 lblCollageType, cmbCollageOutputType,
                 lblCollageGrid, cmbCollageColumns, lblCollageGridBy, cmbCollageRows,
-                lblCollageOrientation, cmbCollageOrientation,
+                lblCollageOrientation, cmbCollageOrientation, btnCollagePaper,
                 lblDisplayOptions,
                 chkCollageShowFilename, chkCollageBorders,
                 lblCollageTextSize, cmbCollageTextSize,
@@ -1316,7 +1336,15 @@ namespace NPPLPrintMaster
                 btnGenerateCollage
             });
 
-            pageFormat.Controls.Add(grpCollage);
+            BuildCollageWorkspace(grpCollage,
+                new[] { txtCollageSource, (Control)btnCollageFiles, btnCollageFolder },
+                new[] { chkCollageSubDirs, (Control)btnImportCollageLayout },
+                new[] { lblCollageType, (Control)cmbCollageOutputType, lblCollageGrid, cmbCollageColumns, lblCollageGridBy, cmbCollageRows },
+                new[] { lblCollageOrientation, (Control)cmbCollageOrientation, btnCollagePaper },
+                new[] { chkCollageShowFilename, (Control)chkCollageBorders, lblCollageTextSize, cmbCollageTextSize },
+                new[] { lblCollageHeader, (Control)txtCollageHeader, chkCollageDate, chkCollagePageNumbers },
+                new[] { txtCollageOutput, (Control)btnCollageOutput },
+                new[] { chkCollageAutoFileName, (Control)lblCollageFileName, txtCollageFileName });
             UpdateCollageArrangementButtons();
 
             pnlProducts = CreateLane("Lane 1: Products", 20, pageCompose);
@@ -1503,56 +1531,38 @@ namespace NPPLPrintMaster
             grpDefs.Controls.AddRange(new Control[] { lblDefDpi, numDefDpi, lblDefEx1, txtDefExport1, btnDefEx1, lblDefEx2, txtDefExport2, btnDefEx2 });
 
             btnSaveSettings = new Button { Text = "💾 Save Preferences", Location = new Point(0, 420), Size = new Size(200, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
-            btnSaveSettings.Click += (s, e) => {
-                currentSettings.Theme =
-                    cmbTheme.SelectedItem == null
-                        ? "Forest Graphite"
-                        : cmbTheme.SelectedItem.ToString();
-
-                currentSettings.TypographyStyle =
-                    cmbTypography.SelectedItem == null
-                        ? AppearanceManager.UseThemeDefault
-                        : cmbTypography.SelectedItem.ToString();
-
-                currentSettings.LayoutStyle =
-                    cmbLayout.SelectedItem == null
-                        ? AppearanceManager.UseThemeDefault
-                        : cmbLayout.SelectedItem.ToString();
-
-                currentSettings.DefaultDpi = (int)numDefDpi.Value;
-                currentSettings.DefaultExport1 = txtDefExport1.Text;
-                currentSettings.DefaultExport2 = txtDefExport2.Text;
-                SettingsManager.Save(currentSettings);
-                MessageBox.Show("Settings permanently saved!", "Success");
-            };
+            btnSaveSettings.Click += (s, e) => SavePreferences();
 
             pageSettings.Controls.AddRange(new Control[] { grpTheme, grpDefs, btnSaveSettings });
 
             int navY = 90;
-            navButtons.Add(CreateNavButton("🏠 Dashboard Home", navY)); navY += 50;
-            navButtons.Add(CreateNavButton("📂 1. Extraction", navY)); navY += 50;
-            navButtons.Add(CreateNavButton("🎨 2. Formatting", navY)); navY += 50;
-            navButtons.Add(CreateNavButton("🖨️ 3. Quick Job Card", navY)); navY += 50;
-            navButtons.Add(CreateNavButton("🖼️ 4. BTW Image Library", navY)); navY += 70;
-            Button btnNavFreeform = CreateNavButton("🚀 Pro Freeform Builder", navY); navButtons.Add(btnNavFreeform); navY += 70;
-            Button btnNavSettings = CreateNavButton("⚙️ Settings", navY); navButtons.Add(btnNavSettings);
+            navButtons.Add(CreateNavButton("Home", navY)); navY += 50;
+            navButtons.Add(CreateNavButton("Extract Labels", navY)); navY += 50;
+            navButtons.Add(CreateNavButton("Format Images", navY)); navY += 50;
+            navButtons.Add(CreateNavButton("Quick Job Card", navY)); navY += 50;
+            navButtons.Add(CreateNavButton("BTW Image Library", navY)); navY += 50;
+            btnNavCollage = CreateNavButton("Image Collage", navY); navButtons.Add(btnNavCollage); navY += 50;
+            Button btnNavFreeform = CreateNavButton("Freeform Designer", navY); navButtons.Add(btnNavFreeform); navY += 50;
+            Button btnNavSettings = CreateNavButton("Settings", navY); navButtons.Add(btnNavSettings);
             pnlSidebar.Controls.AddRange(navButtons.ToArray());
 
             navButtons[0].Click += (s, e) => SwitchPage(pageHome, navButtons[0], "Dashboard Home");
-            navButtons[1].Click += (s, e) => SwitchPage(pageExtract, navButtons[1], "Step 1: BarTender Extraction");
-            navButtons[2].Click += (s, e) => SwitchPage(pageFormat, navButtons[2], "Step 2: Image Formatting");
-            navButtons[3].Click += (s, e) => SwitchPage(pageCompose, navButtons[3], "Step 3: Quick Job Card");
-            navButtons[4].Click += (s, e) => SwitchPage(pageBtwLibrary, navButtons[4], "Step 4: BTW Image Library");
-            btnNavFreeform.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
+            navButtons[1].Click += (s, e) => SwitchPage(pageExtract, navButtons[1], "Extract Labels");
+            navButtons[2].Click += (s, e) => SwitchPage(pageFormat, navButtons[2], "Format Images");
+            navButtons[3].Click += (s, e) => SwitchPage(pageCompose, navButtons[3], "Quick Job Card");
+            navButtons[4].Click += (s, e) => SwitchPage(pageBtwLibrary, navButtons[4], "BTW Image Library");
+            btnNavFreeform.Click += (s, e) => { FreeformBuilderForm builder = new FreeformBuilderForm(appSettings: currentSettings); builder.WindowState = FormWindowState.Maximized; builder.Show(); };
+            btnNavCollage.Click += (s, e) => OpenCollagePage();
             btnNavSettings.Click += (s, e) => SwitchPage(pageSettings, btnNavSettings, "Application Settings");
 
+            BuildInterfaceSelector();
             CaptureOriginalAppearance();
             SwitchPage(pageHome, navButtons[0], "Dashboard Home");
         }
 
         private Button CreateNavButton(string text, int yPos)
         {
-            Button btn = new Button
+            Button btn = new ModernNavigationButton
             {
                 Text = "  " + text,
                 Location = new Point(0, yPos),
@@ -1572,10 +1582,11 @@ namespace NPPLPrintMaster
 
         private void SwitchPage(Panel targetPage, Button clickedButton, string headerTitle)
         {
-            pageHome.Visible = false; pageExtract.Visible = false; pageFormat.Visible = false; pageCompose.Visible = false; pageBtwLibrary.Visible = false; pageSettings.Visible = false;
-            if (activeNavButton != null) { activeNavButton.BackColor = sidebarColor; activeNavButton.ForeColor = (sidebarColor.R > 200) ? Color.Black : Color.LightGray; }
-            activeNavButton = clickedButton; activeNavButton.BackColor = activeColor; activeNavButton.ForeColor = Color.White;
+            pageHome.Visible = false; pageExtract.Visible = false; pageFormat.Visible = false; pageCollage.Visible = false; pageCompose.Visible = false; pageBtwLibrary.Visible = false; pageSettings.Visible = false;
+            if (activeNavButton != null) { activeNavButton.BackColor = sidebarColor; activeNavButton.ForeColor = ThemeManager.GetContrastTextColor(sidebarColor); }
+            activeNavButton = clickedButton; activeNavButton.BackColor = activeColor; activeNavButton.ForeColor = ThemeManager.GetContrastTextColor(activeColor);
             targetPage.Visible = true; targetPage.BringToFront(); lblHeaderTitle.Text = headerTitle;
+            UpdateInterfaceHeading();
         }
 
 

@@ -19,8 +19,8 @@ namespace NPPLPrintMaster
             IDictionary<string, string> customNames, string displayMode,
             IDictionary<string, string> notes, CollageLayout savedLayout, IProgress<string> progress)
         {
-            float width = setup.Landscape ? CollageCellLayout.PageLongSidePoints : CollageCellLayout.PageShortSidePoints;
-            float height = setup.Landscape ? CollageCellLayout.PageShortSidePoints : CollageCellLayout.PageLongSidePoints;
+            float width = setup.WidthPoints;
+            float height = setup.HeightPoints;
             int pages = (images.Count + setup.CellsPerPage - 1) / setup.CellsPerPage;
             DateTime printedOn = DateTime.Now;
             using (var stream = File.Create(outputPath))

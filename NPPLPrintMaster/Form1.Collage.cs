@@ -32,7 +32,7 @@ namespace NPPLPrintMaster
                 txtCollageOutput.Text = previousOutput;
                 if (imported)
                 {
-                    SwitchPage(pageFormat, navButtons[2], "Step 2: Image Formatting");
+                    OpenCollagePage();
                     BtnArrangeCollage_Click(this, EventArgs.Empty);
                 }
             }
@@ -105,6 +105,9 @@ namespace NPPLPrintMaster
         {
             return new CollagePageSetup
             {
+                PaperSize = collagePaperSetup.PaperSize,
+                CustomWidthMm = collagePaperSetup.CustomWidthMm,
+                CustomHeightMm = collagePaperSetup.CustomHeightMm,
                 Columns = cmbCollageColumns.SelectedIndex + 1,
                 Rows = cmbCollageRows.SelectedIndex + 1,
                 Landscape =
@@ -133,6 +136,8 @@ namespace NPPLPrintMaster
             page = page.Clone();
             page.Normalize();
 
+            collagePaperSetup = page.Clone();
+            btnCollagePaper.Text = "Paper: " + page.PaperSize + " (PDF)...";
             cmbCollageColumns.SelectedIndex = page.Columns - 1;
             cmbCollageRows.SelectedIndex = page.Rows - 1;
             cmbCollageOrientation.SelectedIndex = page.Landscape ? 1 : 0;
@@ -142,6 +147,7 @@ namespace NPPLPrintMaster
             txtCollageHeader.Text = page.HeaderText;
             chkCollageDate.Checked = page.ShowDate;
             chkCollagePageNumbers.Checked = page.ShowPageNumbers;
+            UpdateCollagePaperSummary();
         }
 
         // Which text is printed under each image. The check box switches
@@ -190,13 +196,18 @@ namespace NPPLPrintMaster
 
             btnArrangeCollage.Text =
                 isPdf && manualCollageSlots != null
-                    ? "✓ Edit Arrangement"
-                    : "🖼  Arrange Images...";
+                    ? "Edit Arrangement..."
+                    : "Arrange Images...";
+            if (btnGenerateCollage != null)
+            {
+                btnGenerateCollage.Text = "Export " + (cmbCollageOutputType.SelectedItem ?? "PDF") + "...";
+                btnGenerateCollage.Enabled = hasSource;
+                if (collageExportStatus != null &&
+                    (collageExportStatus.Text == "Choose images to begin." || collageExportStatus.Text.StartsWith("Ready to export")))
+                    collageExportStatus.Text = hasSource ? "Ready to export " + (cmbCollageOutputType.SelectedItem ?? "PDF") + "." : "Choose images to begin.";
+            }
 
-            btnClearCollageArrangement.Text =
-                manualCollageSlots == null
-                    ? "↺  Automatic"
-                    : "↺  Reset Automatic";
+            btnClearCollageArrangement.Text = "Reset layout";
         }
 
         private void BtnArrangeCollage_Click(object sender, EventArgs e)
@@ -715,6 +726,7 @@ namespace NPPLPrintMaster
             btnGenerateCollage.Enabled = false;
             string oldButtonText = btnGenerateCollage.Text;
             btnGenerateCollage.Text = "⏳ Generating...";
+            if (collageExportStatus != null) collageExportStatus.Text = "Preparing your export...";
 
             rtbFormatConsole.Clear();
             rtbFormatConsole.AppendText(
@@ -730,6 +742,8 @@ namespace NPPLPrintMaster
             {
                 rtbFormatConsole.AppendText(message + Environment.NewLine);
                 rtbFormatConsole.ScrollToCaret();
+                if (collageExportStatus != null)
+                    collageExportStatus.Text = System.Text.RegularExpressions.Regex.Replace(message, @"^\[[^\]]+\]\s*", string.Empty);
             });
 
             try
@@ -767,6 +781,7 @@ namespace NPPLPrintMaster
                     "Generated " + outputType +
                     " collage with " + result.ImageCount +
                     " image(s): " + result.OutputPath);
+                if (collageExportStatus != null) collageExportStatus.Text = "Exported: " + Path.GetFileName(result.OutputPath);
 
                 MessageBox.Show(
                     "Collage created successfully!\n\n" +
@@ -781,6 +796,7 @@ namespace NPPLPrintMaster
             {
                 rtbFormatConsole.AppendText(
                     "[COLLAGE ERROR] " + ex.Message + "\n");
+                if (collageExportStatus != null) collageExportStatus.Text = "Export failed. Check the output folder and try again.";
 
                 Logger.LogAction(
                     "ERROR",

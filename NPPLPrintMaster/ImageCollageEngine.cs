@@ -420,7 +420,7 @@ namespace NPPLPrintMaster
 
         // ============================================================
         // PDF
-        // Creates A4 pages with embedded images and selectable vector text.
+        // Creates pages at the chosen paper size with images and selectable text.
         // The Word renderer below continues to use the bitmap page renderer.
         // No extra PDF NuGet package is required.
         // ============================================================

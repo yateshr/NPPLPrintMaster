@@ -257,6 +257,7 @@ namespace NPPLPrintMaster
             string text = btn.Text ?? string.Empty;
 
             bool primaryAction =
+                object.Equals(btn.Tag, "PrimaryAction") ||
                 text.Contains("Extract Images") ||
                 text.Contains("Find & Extract") ||
                 text.Contains("Format Images") ||
@@ -322,9 +323,22 @@ namespace NPPLPrintMaster
 
         public static Color GetContrastTextColor(Color background)
         {
-            return IsLight(background)
-                ? Color.FromArgb(20, 25, 30)
-                : Color.White;
+            Color dark = Color.FromArgb(20, 25, 30);
+            double luminance = RelativeLuminance(background);
+            double darkContrast = (luminance + 0.05) / (RelativeLuminance(dark) + 0.05);
+            double whiteContrast = 1.05 / (luminance + 0.05);
+            return darkContrast >= whiteContrast ? dark : Color.White;
+        }
+
+        private static double RelativeLuminance(Color color)
+        {
+            return 0.2126 * LinearChannel(color.R) + 0.7152 * LinearChannel(color.G) + 0.0722 * LinearChannel(color.B);
+        }
+
+        private static double LinearChannel(byte channel)
+        {
+            double value = channel / 255.0;
+            return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
         }
 
         private static Color Blend(Color a, Color b, float amount)

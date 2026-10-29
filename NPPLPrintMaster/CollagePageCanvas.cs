@@ -18,19 +18,15 @@ namespace NPPLPrintMaster
     /// </summary>
     internal sealed class CollagePageCanvas : Control
     {
-        // A4 at 96 DPI, so one PDF point is 96 / 72 world units.
+        // One PDF point is 96 / 72 world units for every paper size.
         private const float WorldUnitsPerPoint = 96f / 72f;
-        private const float PageShortSide =
-            CollageCellLayout.PageShortSidePoints * WorldUnitsPerPoint;
-        private const float PageLongSide =
-            CollageCellLayout.PageLongSidePoints * WorldUnitsPerPoint;
 
         private const float SideMargin = 28f;
         private const float TopMargin = 52f;
         private const float PageGap = 52f;
         private const float BottomMargin = 28f;
 
-        private const float MinZoom = 0.12f;
+        private const float MinZoom = 0.02f;
         private const float MaxZoom = 4f;
         private const float MinimumCaptionPixels = 11f;
         private const int AutoScrollZone = 56;
@@ -370,9 +366,8 @@ namespace NPPLPrintMaster
         {
             get
             {
-                return _model.Page.Landscape
-                    ? new SizeF(PageLongSide, PageShortSide)
-                    : new SizeF(PageShortSide, PageLongSide);
+                return new SizeF(_model.Page.WidthPoints * WorldUnitsPerPoint,
+                    _model.Page.HeightPoints * WorldUnitsPerPoint);
             }
         }
 

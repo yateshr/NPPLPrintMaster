@@ -46,7 +46,13 @@ namespace NPPLPrintMaster
                     themeName,
                     layoutChoice);
 
-            activeTheme = ThemeManager.GetTheme(themeName);
+            bool modernInterface = IsModernInterface;
+            if (modernInterface)
+            {
+                resolvedTypography = AppearanceManager.NpplOriginalTypography;
+                resolvedLayout = AppearanceManager.NpplOriginalLayout;
+            }
+            activeTheme = modernInterface ? InterfaceAppearance.ModernTheme() : ThemeManager.GetTheme(themeName);
             sidebarColor = activeTheme.SidebarColor; sidebarHover = activeTheme.SidebarHover;
             bgLight = activeTheme.BgLight; contentBg = activeTheme.ContentBg;
             textColor = activeTheme.TextColor; controlBg = activeTheme.ControlBg; activeColor = activeTheme.ActiveColor;
@@ -77,6 +83,7 @@ namespace NPPLPrintMaster
             ThemeManager.ApplyColorsToControls(pageHome.Controls, activeTheme);
             ThemeManager.ApplyColorsToControls(pageExtract.Controls, activeTheme);
             ThemeManager.ApplyColorsToControls(pageFormat.Controls, activeTheme);
+            ThemeManager.ApplyColorsToControls(pageCollage.Controls, activeTheme);
             ThemeManager.ApplyColorsToControls(pageCompose.Controls, activeTheme);
             ThemeManager.ApplyColorsToControls(pageSettings.Controls, activeTheme);
 
@@ -150,7 +157,7 @@ namespace NPPLPrintMaster
             // IMPORTANT: color/border styling only. No Font, Size, Location,
             // Dock, Anchor, page layout, or header height is changed here.
             bool useBarTender10Classic =
-                ThemeManager.IsBarTender10Classic(themeName);
+                !modernInterface && ThemeManager.IsBarTender10Classic(themeName);
 
             if (useBarTender10Classic)
             {
@@ -198,12 +205,14 @@ namespace NPPLPrintMaster
                 pageHome.BackColor = classicWorkspace;
                 pageExtract.BackColor = classicWorkspace;
                 pageFormat.BackColor = classicWorkspace;
+                pageCollage.BackColor = classicWorkspace;
                 pageCompose.BackColor = classicWorkspace;
                 pageSettings.BackColor = classicWorkspace;
 
                 ApplyBarTender10ClassicControlPolish(pageHome.Controls);
                 ApplyBarTender10ClassicControlPolish(pageExtract.Controls);
                 ApplyBarTender10ClassicControlPolish(pageFormat.Controls);
+                ApplyBarTender10ClassicControlPolish(pageCollage.Controls);
                 ApplyBarTender10ClassicControlPolish(pageCompose.Controls);
                 ApplyBarTender10ClassicControlPolish(pageSettings.Controls);
             }
@@ -212,6 +221,7 @@ namespace NPPLPrintMaster
                 pageHome.BackColor = bgLight;
                 pageExtract.BackColor = bgLight;
                 pageFormat.BackColor = bgLight;
+                pageCollage.BackColor = bgLight;
                 pageCompose.BackColor = bgLight;
                 pageSettings.BackColor = bgLight;
 
@@ -221,6 +231,8 @@ namespace NPPLPrintMaster
 
             ApplyLayoutStyle(resolvedLayout);
             ApplyTypographyStyle(resolvedTypography);
+            ApplyCollageDesign();
+            ApplyInterfacePresentation();
 
             if (lblAppearanceResolved != null)
             {

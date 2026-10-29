@@ -69,6 +69,7 @@ namespace NPPLPrintMaster
         private Button _remarkResetButton;
         private Button _placeButton;
         private Button _removeButton;
+        private Button _previewButton;
         private ComboBox _pageCombo;
         private ComboBox _dropModeCombo;
         private ComboBox _displayModeCombo;
@@ -140,10 +141,11 @@ namespace NPPLPrintMaster
                     ? "Forest Graphite"
                     : AppearanceManager.NormalizeTheme(appSettings.Theme);
 
-            _theme = ThemeManager.GetTheme(themeName);
+            bool modernInterface = appSettings != null && InterfaceAppearance.IsModern(appSettings.InterfaceStyle);
+            _theme = modernInterface ? InterfaceAppearance.ModernTheme() : ThemeManager.GetTheme(themeName);
 
             string typography =
-                appSettings == null
+                appSettings == null || modernInterface
                     ? AppearanceManager.NpplOriginalTypography
                     : AppearanceManager.ResolveTypography(
                         themeName,
@@ -316,8 +318,7 @@ namespace NPPLPrintMaster
         private string DescribePage()
         {
             return "Arrange images on the PDF pages  •  " +
-                   _page.Columns + " × " + _page.Rows + " grid  •  A4 " +
-                   (_page.Landscape ? "Landscape" : "Portrait") + "  •  " +
+                   _page.Columns + " × " + _page.Rows + " grid  •  " + _page.PaperDescription + "  •  " +
                    _page.CellsPerPage +
                    (_page.CellsPerPage == 1 ? " image" : " images") +
                    " per page";
@@ -417,7 +418,7 @@ namespace NPPLPrintMaster
             _searchBox.TextChanged += (s, e) => RefreshLibrary();
             CollageWorkspaceUi.SetCueBanner(
                 _searchBox,
-                "Name or remark  (Ctrl+F)");
+                "Name or caption  (Ctrl+F)");
 
             searchRow.Controls.Add(_searchBox);
             searchRow.Controls.Add(searchLabel);
@@ -479,7 +480,7 @@ namespace NPPLPrintMaster
             Panel inspector = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 218,
+                Height = 252,
                 BackColor = _theme.ContentBg,
                 Padding = new Padding(0, 8, 0, 0)
             };
@@ -520,7 +521,7 @@ namespace NPPLPrintMaster
             _remarkBox.TextChanged += RemarkBox_TextChanged;
             _toolTip.SetToolTip(
                 _remarkBox,
-                "Remark printed under the file name.\n" +
+                "Caption printed under the file name.\n" +
                 "It starts as the file name and can be changed.");
 
             _remarkResetButton = CreateButton("↺", 30, false);
@@ -532,7 +533,7 @@ namespace NPPLPrintMaster
 
             remarkRow.Controls.Add(_remarkBox);
             remarkRow.Controls.Add(_remarkResetButton);
-            remarkRow.Controls.Add(CreateInspectorRowLabel("Remark"));
+            remarkRow.Controls.Add(CreateInspectorRowLabel("Caption"));
 
             Panel noteRow = new Panel
             {
@@ -545,11 +546,11 @@ namespace NPPLPrintMaster
             _noteBox.TextChanged += NoteBox_TextChanged;
             _toolTip.SetToolTip(
                 _noteBox,
-                "Additional remark, printed on one more line below the remark.\n" +
+                "Additional caption, printed on one more line below the caption.\n" +
                 "Leave it empty for no extra line.");
 
             noteRow.Controls.Add(_noteBox);
-            noteRow.Controls.Add(CreateInspectorRowLabel("Remark 2"));
+            noteRow.Controls.Add(CreateInspectorRowLabel("Additional text"));
 
             TableLayoutPanel actionRow = new TableLayoutPanel
             {
@@ -604,6 +605,12 @@ namespace NPPLPrintMaster
             _toolTip.SetToolTip(bulkText,
                 "Select image cells across all PDF pages and paste their text once.");
 
+            _previewButton = CreateButton("View Original (F4)", 240, false);
+            _previewButton.Dock = DockStyle.Top;
+            _previewButton.Height = 34;
+            _previewButton.Click += (s, e) => PreviewOriginal(_inspected.FirstOrDefault());
+            _toolTip.SetToolTip(_previewButton, "Open the selected image at full resolution. Zoom with the mouse wheel and drag to pan.");
+            inspector.Controls.Add(_previewButton);
             inspector.Controls.Add(bulkText);
             inspector.Controls.Add(actionRow);
             inspector.Controls.Add(noteRow);
@@ -656,7 +663,7 @@ namespace NPPLPrintMaster
                 FontStyle.Regular,
                 _theme.MutedTextColor);
             label.Dock = DockStyle.Left;
-            label.Width = 62;
+            label.Width = 98;
             label.Padding = new Padding(0, 4, 0, 0);
             return label;
         }
@@ -833,8 +840,8 @@ namespace NPPLPrintMaster
                 new object[]
                 {
                     "File name",
-                    "File name + remark",
-                    "Remark only",
+                    "File name + caption",
+                    "Caption only",
                     "No text"
                 });
             _displayModeCombo.SelectedIndex =
@@ -907,7 +914,32 @@ namespace NPPLPrintMaster
                     CreateToolLabel("×"),
                     _rowsCombo));
 
+            toolbar.Controls.Add(CreateToolGroup(CreateToolButton("Page Setup...", 110,
+                "Choose A4, A3, A2 or custom dimensions and orientation", ChangePaperSetup)));
             return toolbar;
+        }
+
+        private void ChangePaperSetup()
+        {
+            using (var dialog = new CollagePaperSetupForm(_page))
+                if (dialog.ShowDialog(this) == DialogResult.OK) ApplyPaperSetup(dialog.ResultPage);
+        }
+
+        private void ApplyPaperSetup(CollagePageSetup setup)
+        {
+            setup = setup.Clone(); setup.Normalize();
+            if (_page.PaperSize == setup.PaperSize && _page.Landscape == setup.Landscape &&
+                _page.CustomWidthMm == setup.CustomWidthMm && _page.CustomHeightMm == setup.CustomHeightMm) return;
+            int currentPage = _canvas.CurrentPage;
+            PushUndo();
+            _page.PaperSize = setup.PaperSize;
+            _page.CustomWidthMm = setup.CustomWidthMm;
+            _page.CustomHeightMm = setup.CustomHeightMm;
+            _page.Landscape = setup.Landscape;
+            QueueAutosave();
+            RefreshAll();
+            _canvas.FitPage();
+            _canvas.ScrollToPage(currentPage);
         }
 
         private void ChangeGrid()
@@ -1042,7 +1074,7 @@ namespace NPPLPrintMaster
             statusPanel.Controls.Add(tips);
             statusPanel.Controls.Add(_statusLabel);
 
-            Button cancel = CreateButton("Cancel", 100, false);
+            Button cancel = CreateButton("Back", 90, false);
             cancel.Dock = DockStyle.Right;
             cancel.Click += (s, e) => Close();
 
@@ -1052,11 +1084,17 @@ namespace NPPLPrintMaster
                 Width = 8
             };
 
-            Button use = CreateButton("✓  Use This Arrangement", 196, true);
+            Button use = CreateButton("Apply Layout and Return", 196, true);
+            _toolTip.SetToolTip(use, "Apply your layout, then export the file on the Image Collage screen.");
             use.Dock = DockStyle.Right;
             use.Click += (s, e) => AcceptArrangement();
 
+            Button saveLayout = CreateButton("Save Editable Layout...", 160, false);
+            saveLayout.Dock = DockStyle.Right;
+            saveLayout.Click += (s, e) => SaveLayoutToFile();
+            _toolTip.SetToolTip(saveLayout, "Save an editable .npplcollage file to continue this job later.");
             footer.Controls.Add(statusPanel);
+            footer.Controls.Add(saveLayout);
             footer.Controls.Add(cancel);
             footer.Controls.Add(gap);
             footer.Controls.Add(use);
@@ -1151,11 +1189,11 @@ namespace NPPLPrintMaster
             menu.Items.Add(new ToolStripSeparator());
 
             ToolStripItem exportRemarks =
-                menu.Items.Add("Export remarks to Excel…");
+                menu.Items.Add("Export captions to Excel…");
             exportRemarks.Click += (s, e) => ExportRemarksWithDialog();
 
             ToolStripItem importRemarks =
-                menu.Items.Add("Import remarks from Excel…");
+                menu.Items.Add("Import captions from Excel…");
             importRemarks.Click += (s, e) => ImportRemarksWithDialog();
 
             menu.Opening +=
@@ -1171,6 +1209,9 @@ namespace NPPLPrintMaster
         private ContextMenuStrip CreateLibraryMenu()
         {
             ContextMenuStrip menu = new ContextMenuStrip();
+            ToolStripItem preview = menu.Items.Add("View original image (F4)");
+            preview.Click += (s, e) => PreviewOriginal(_library.SelectedPaths.FirstOrDefault());
+            menu.Items.Add(new ToolStripSeparator());
 
             ToolStripMenuItem place =
                 new ToolStripMenuItem("Place on page")
@@ -1226,6 +1267,7 @@ namespace NPPLPrintMaster
                     bool anyUnplaced = selected.Any(p => !_model.IsPlaced(p));
 
                     place.Enabled = anyUnplaced;
+                    preview.Enabled = selected.Count == 1;
                     show.Enabled = anyPlaced;
                     remove.Enabled = anyPlaced;
                 };
@@ -1236,9 +1278,12 @@ namespace NPPLPrintMaster
         private ContextMenuStrip CreateCanvasMenu()
         {
             ContextMenuStrip menu = new ContextMenuStrip();
+            ToolStripItem preview = menu.Items.Add("View original image (F4)");
+            preview.Click += (s, e) => PreviewOriginal(_canvas.SelectedPath);
+            menu.Items.Add(new ToolStripSeparator());
 
             ToolStripMenuItem edit =
-                new ToolStripMenuItem("Edit remark")
+                new ToolStripMenuItem("Edit caption")
                 {
                     ShortcutKeyDisplayString = "F2"
                 };
@@ -1249,7 +1294,7 @@ namespace NPPLPrintMaster
                 };
 
             ToolStripMenuItem editNote =
-                new ToolStripMenuItem("Edit remark 2 (extra line)")
+                new ToolStripMenuItem("Edit additional text (extra line)")
                 {
                     ShortcutKeyDisplayString = "Shift+F2"
                 };
@@ -1318,6 +1363,7 @@ namespace NPPLPrintMaster
                     }
 
                     bool hasImage = _canvas.SelectedPath != null;
+                    preview.Enabled = hasImage;
 
                     edit.Enabled = hasImage;
                     editNote.Enabled = hasImage;
@@ -1657,6 +1703,7 @@ namespace NPPLPrintMaster
 
         private void RefreshInspector()
         {
+            _previewButton.Enabled = _inspected.Count == 1;
             // Identifies what the two text boxes edit; null when nothing is
             // selected.
             string key = null;
@@ -1752,7 +1799,7 @@ namespace NPPLPrintMaster
                 several
                     ? "Type, then Enter: same for all " + _editTargets.Count
                     : _editTargets.Count == 1
-                        ? "Additional remark (optional)"
+                        ? "Additional caption (optional)"
                         : string.Empty);
 
             _remarkResetButton.Enabled =
@@ -1889,6 +1936,13 @@ namespace NPPLPrintMaster
             }
             else if (_canvas.SelectedPath != null)
                 _canvas.BeginEdit(_canvas.SelectedPath, note);
+        }
+
+        private void PreviewOriginal(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+            using (var preview = new CollageImagePreviewForm(path, _theme, Font))
+                preview.ShowDialog(this);
         }
 
         private void SetFilter(LibraryFilter filter)
@@ -2241,8 +2295,8 @@ namespace NPPLPrintMaster
                         this,
                         "Layout saved.\n\n" +
                         dialog.FileName + "\n\n" +
-                        "Use \"Import Layout\" in the Image Collage Builder " +
-                        "to open it again.",
+                        "Use \"Open Saved Layout / PDF\" on the Image Collage page " +
+                        "to reopen this job.",
                         "Save Layout",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
@@ -2444,8 +2498,8 @@ namespace NPPLPrintMaster
                 }
                 var countLabel = new Label { Dock = DockStyle.Fill };
                 var apply = CreateButton("Apply text", 110, true);
-                var updateRemark = new CheckBox { Text = "Update Remark", AutoSize = true, Checked = true };
-                var updateNote = new CheckBox { Text = "Update Remark 2", AutoSize = true };
+                var updateRemark = new CheckBox { Text = "Update Caption", AutoSize = true, Checked = true };
+                var updateNote = new CheckBox { Text = "Update Additional text", AutoSize = true };
                 var remarkBox = new TextBox { Dock = DockStyle.Fill };
                 var noteBox = new TextBox { Dock = DockStyle.Fill, Enabled = false };
                 var initiallySelected = paths.Where(p => hasSelection && _inspectedSet.Contains(p)).ToList();
@@ -2522,8 +2576,8 @@ namespace NPPLPrintMaster
                     dialog.DialogResult = DialogResult.OK;
                     dialog.Close();
                 };
-                _toolTip.SetToolTip(remarkBox, "Empty text restores the file name as the remark.");
-                _toolTip.SetToolTip(noteBox, "Empty text removes Remark 2 from checked cells.");
+                _toolTip.SetToolTip(remarkBox, "Empty text restores the file name as the caption.");
+                _toolTip.SetToolTip(noteBox, "Empty text removes Additional text from checked cells.");
                 refresh();
                 dialog.ShowDialog(this);
             }
@@ -2566,15 +2620,15 @@ namespace NPPLPrintMaster
         {
             using (SaveFileDialog dialog = new SaveFileDialog
             {
-                Title = "Export remarks to Excel",
+                Title = "Export captions to Excel",
                 Filter = "Excel workbook|*.xlsx",
                 DefaultExt = "xlsx",
-                FileName = "CollageRemarks_" + DateTime.Now.ToString("yyyyMMdd_HHmm")
+                FileName = "CollageCaptions_" + DateTime.Now.ToString("yyyyMMdd_HHmm")
             })
             {
                 if (DialogMemoryManager.ShowSaveDialog(
                     dialog,
-                    "Collage.RemarkSheet") != DialogResult.OK)
+                    "Collage.CaptionSheet") != DialogResult.OK)
                     return;
 
                 try
@@ -2584,9 +2638,9 @@ namespace NPPLPrintMaster
                     MessageBox.Show(
                         this,
                         count + " image(s) written to\n" + dialog.FileName + "\n\n" +
-                        "Type the remarks in columns B and C, save the workbook, " +
-                        "then use \"Import remarks from Excel\".",
-                        "Export Remarks",
+                        "Type the captions in columns B and C, save the workbook, " +
+                        "then use \"Import captions from Excel\".",
+                        "Export Captions",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
                 }
@@ -2594,8 +2648,8 @@ namespace NPPLPrintMaster
                 {
                     MessageBox.Show(
                         this,
-                        "The remarks could not be exported.\n\n" + ex.Message,
-                        "Export Remarks",
+                        "The captions could not be exported.\n\n" + ex.Message,
+                        "Export Captions",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Error);
                 }
@@ -2632,13 +2686,13 @@ namespace NPPLPrintMaster
         {
             using (OpenFileDialog dialog = new OpenFileDialog
             {
-                Title = "Import remarks",
+                Title = "Import captions",
                 Filter = CollageRemarkSheet.OpenFilter
             })
             {
                 if (DialogMemoryManager.ShowOpenDialog(
                     dialog,
-                    "Collage.RemarkSheet") != DialogResult.OK)
+                    "Collage.CaptionSheet") != DialogResult.OK)
                     return;
 
                 try
@@ -2646,7 +2700,7 @@ namespace NPPLPrintMaster
                     MessageBox.Show(
                         this,
                         ImportRemarksFrom(dialog.FileName),
-                        "Import Remarks",
+                        "Import Captions",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
                 }
@@ -2656,8 +2710,8 @@ namespace NPPLPrintMaster
                         this,
                         "The sheet could not be read.\n\n" + ex.Message + "\n\n" +
                         "Column A must hold the image file name, column B the " +
-                        "remark and column C the additional remark.",
-                        "Import Remarks",
+                        "caption and column C the additional caption.",
+                        "Import Captions",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Error);
                 }
@@ -2844,6 +2898,9 @@ namespace NPPLPrintMaster
 
             switch (keyData)
             {
+                case Keys.F4:
+                    if (_inspected.Count == 1) PreviewOriginal(_inspected[0]);
+                    return true;
                 case Keys.Control | Keys.A:
                     if (_canvas.ContainsFocus)
                     {

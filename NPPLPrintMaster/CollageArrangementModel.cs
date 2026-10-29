@@ -9,6 +9,7 @@ namespace NPPLPrintMaster
     {
         public int Columns;
         public int Rows;
+        public CollagePageSetup Paper;
         public string[] Images;
         public string[] Slots;
         public Dictionary<string, string> Remarks;
@@ -619,6 +620,7 @@ namespace NPPLPrintMaster
             {
                 Columns = Page.Columns,
                 Rows = Page.Rows,
+                Paper = Page.Clone(),
                 Images = _images.ToArray(),
                 Slots = _slots.ToArray(),
                 Remarks =
@@ -639,6 +641,13 @@ namespace NPPLPrintMaster
 
             Page.Columns = snapshot.Columns;
             Page.Rows = snapshot.Rows;
+            if (snapshot.Paper != null)
+            {
+                Page.PaperSize = snapshot.Paper.PaperSize;
+                Page.CustomWidthMm = snapshot.Paper.CustomWidthMm;
+                Page.CustomHeightMm = snapshot.Paper.CustomHeightMm;
+                Page.Landscape = snapshot.Paper.Landscape;
+            }
 
             if (!snapshot.Images.SequenceEqual(_images))
             {

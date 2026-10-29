@@ -7,6 +7,7 @@ namespace NPPLPrintMaster
     public class AppSettings
     {
         public string Theme { get; set; } = "Forest Graphite";
+        public string InterfaceStyle { get; set; } = InterfaceAppearance.Current;
         public string TypographyStyle { get; set; } = AppearanceManager.UseThemeDefault;
         public string LayoutStyle { get; set; } = AppearanceManager.UseThemeDefault;
         public int DefaultDpi { get; set; } = 800;
@@ -47,6 +48,7 @@ namespace NPPLPrintMaster
                     if (parts.Length == 2)
                     {
                         if (parts[0] == "Theme") s.Theme = parts[1];
+                        if (parts[0] == "InterfaceStyle") s.InterfaceStyle = parts[1];
                         if (parts[0] == "TypographyStyle") s.TypographyStyle = parts[1];
                         if (parts[0] == "LayoutStyle") s.LayoutStyle = parts[1];
                         if (parts[0] == "DefaultDpi" && int.TryParse(parts[1], out int dpi)) s.DefaultDpi = dpi;
@@ -67,6 +69,7 @@ namespace NPPLPrintMaster
                 }
             }
             s.Theme = AppearanceManager.NormalizeTheme(s.Theme);
+            s.InterfaceStyle = InterfaceAppearance.Normalize(s.InterfaceStyle);
             s.TypographyStyle = AppearanceManager.NormalizeTypographyChoice(s.TypographyStyle);
             s.LayoutStyle = AppearanceManager.NormalizeLayoutChoice(s.LayoutStyle);
             return s;
@@ -77,6 +80,7 @@ namespace NPPLPrintMaster
             using (StreamWriter sw = new StreamWriter(settingsFile))
             {
                 sw.WriteLine($"Theme={s.Theme}");
+                sw.WriteLine($"InterfaceStyle={InterfaceAppearance.Normalize(s.InterfaceStyle)}");
                 sw.WriteLine($"TypographyStyle={s.TypographyStyle}");
                 sw.WriteLine($"LayoutStyle={s.LayoutStyle}");
                 sw.WriteLine($"DefaultDpi={s.DefaultDpi}");

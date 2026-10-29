@@ -146,15 +146,8 @@ namespace NPPLPrintMaster
 
         private void UpdateLayoutMetrics()
         {
-            float pageWidth =
-                _model.Page.Landscape
-                    ? CollageCellLayout.PageLongSidePoints
-                    : CollageCellLayout.PageShortSidePoints;
-
-            float pageHeight =
-                _model.Page.Landscape
-                    ? CollageCellLayout.PageShortSidePoints
-                    : CollageCellLayout.PageLongSidePoints;
+            float pageWidth = _model.Page.WidthPoints;
+            float pageHeight = _model.Page.HeightPoints;
 
             _thumbWidth =
                 Math.Max(
@@ -210,10 +203,7 @@ namespace NPPLPrintMaster
         {
             get
             {
-                return _thumbWidth /
-                       (_model.Page.Landscape
-                           ? CollageCellLayout.PageLongSidePoints
-                           : CollageCellLayout.PageShortSidePoints);
+                return _thumbWidth / _model.Page.WidthPoints;
             }
         }
 

@@ -583,14 +583,15 @@ namespace NPPLPrintMaster
             // SettingsManager. Use that same theme here so toolbar commands
             // remain readable on both dark and light themes.
             AppSettings builderSettings =
-                SettingsManager.Load();
+                appSettings ?? SettingsManager.Load();
 
             ThemeColors builderTheme =
-                ThemeManager.GetTheme(
-                    builderSettings.Theme);
+                InterfaceAppearance.IsModern(builderSettings.InterfaceStyle)
+                    ? InterfaceAppearance.ModernTheme()
+                    : ThemeManager.GetTheme(builderSettings.Theme);
 
             bool useBarTender10Classic =
-                ThemeManager.IsBarTender10Classic(
+                !InterfaceAppearance.IsModern(builderSettings.InterfaceStyle) && ThemeManager.IsBarTender10Classic(
                     builderSettings.Theme);
 
             Color toolbarBackColor =

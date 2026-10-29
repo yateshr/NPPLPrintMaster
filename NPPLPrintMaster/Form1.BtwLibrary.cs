@@ -3009,10 +3009,7 @@ namespace NPPLPrintMaster
             ResetManualCollageArrangement();
 
             if (navButtons.Count > 2)
-                SwitchPage(
-                    pageFormat,
-                    navButtons[2],
-                    "Step 2: Image Formatting");
+                OpenCollagePage();
 
             MessageBox.Show(
                 "The clean BTW image has been loaded into Image Collage Builder.\n\n" +
