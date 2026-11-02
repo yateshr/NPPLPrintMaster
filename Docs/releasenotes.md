@@ -1,6 +1,6 @@
 # Release Notes
 
-This page separates published versions from local changes under review. Check **Help > Software Updates** for the version of the executable you are actually running. A local review build is not automatically a public GitHub release.
+Check **Help > Software Updates** for the version of the executable you are actually running.
 
 ## Local review build 1.2.0.0 — not published
 
@@ -15,7 +15,7 @@ This page separates published versions from local changes under review. Check **
 
 Save the interface choice in Settings. Reopen editor windows when you want to change their workspace layout; changing the main interface does not discard their work.
 
-## Earlier local review build 1.1.5.0
+## Changes since 1.1.1 (included in 1.2.0.0)
 
 ### Documentation
 
@@ -33,7 +33,7 @@ Save the interface choice in Settings. Reopen editor windows when you want to ch
 - Help documents included in the output and installer, with embedded fallback copies.
 - Settings moved to the bottom of the sidebar above the developer credit, with a gear icon in both UI modes.
 
-These local builds are available for testing. They have not been pushed or published as part of this documentation update.
+
 
 ## Version 1.1.1.0 — published
 
