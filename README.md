@@ -4,6 +4,7 @@
 
 <p>
   <a href="#about-the-project">About</a> ·
+  <a href="#latest-release">Latest Release</a> ·
   <a href="#features">Features</a> ·
   <a href="#ui--ux">UI / UX</a> ·
   <a href="#workflow">Workflow</a> ·
@@ -21,6 +22,25 @@
 </p>
 
 </div>
+
+---
+
+## Latest Release
+
+**[NPPLPrintMaster v1.2.0](https://github.com/yateshr/NPPLPrintMaster/releases/tag/v1.2.0.0)**
+
+- **Modern UI** (optional) extended to extraction, image formatting, job-card preparation, library and editor windows, with consistent orange actions and Segoe UI typography.
+- **Canvas-first collage arrangement:** image tray below the page, selected-image controls and page navigation on the right.
+- Extraction split into template-selection and filename-search workflows; persistent workspace actions and responsive job-card lanes.
+- Refreshed PrintMaster logo and icons, plus installer welcome/finish pages with before/after install guidance.
+- Reorganised Help pages and release notes.
+
+**Downloads** (from the release page):
+
+- `NPPLPrintMaster-Setup-1.2.0.0.exe` - install or upgrade.
+- `NPPLPrintMaster-Portable-1.2.0.0.zip` - extract the whole ZIP, then run `NPPLPrintMaster.exe`.
+
+Requires Windows and .NET Framework 4.7.2 or newer. Existing 1.1 users can update from **Help > Software Updates**. Full history: [`Docs/releasenotes.md`](Docs/releasenotes.md).
 
 ---
 
