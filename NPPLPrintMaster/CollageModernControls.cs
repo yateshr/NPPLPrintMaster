@@ -99,7 +99,7 @@ namespace NPPLPrintMaster
         {
             base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using (var shape = CollageShapes.Rounded(new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), 6))
-            using (var pen = new Pen(input.Focused ? Color.FromArgb(0, 135, 90) : Color.FromArgb(218, 226, 234))) e.Graphics.DrawPath(pen, shape);
+            using (var pen = new Pen(input.Focused ? ModernStyles.Accent : Color.FromArgb(218, 226, 234))) e.Graphics.DrawPath(pen, shape);
         }
     }
 

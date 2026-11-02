@@ -43,8 +43,8 @@ namespace NPPLPrintMaster
             layout.Controls.Add(_customHint, 0, 4); layout.SetColumnSpan(_customHint, 2);
             layout.Controls.Add(_dimensions, 0, 5); layout.SetColumnSpan(_dimensions, 2);
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
-            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90 };
-            var apply = new Button { Text = "Apply", Width = 90 };
+            var cancel = new StudioButton { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90 };
+            var apply = new StudioButton { Text = "Apply", Width = 90 };
             apply.Click += (s, e) => { UpdatePage(); DialogResult = DialogResult.OK; Close(); };
             buttons.Controls.Add(cancel); buttons.Controls.Add(apply);
             layout.Controls.Add(buttons, 0, 6); layout.SetColumnSpan(buttons, 2);

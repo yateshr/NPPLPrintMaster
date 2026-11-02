@@ -34,8 +34,8 @@ namespace NPPLPrintMaster
             preview.BackColor = Color.FromArgb(35,39,43); preview.BorderStyle = BorderStyle.FixedSingle;
             pathLabel.Dock = DockStyle.Bottom; pathLabel.Height = 45; pathLabel.AutoEllipsis = true;
             Panel buttons = new Panel { Dock = DockStyle.Bottom, Height = 40 };
-            Button large = new Button { Text = "Large Preview", Location = new Point(6,5), Size = new Size(120,30) };
-            Button folder = new Button { Text = "Open File Location", Location = new Point(132,5), Size = new Size(145,30) };
+            Button large = new StudioButton { Text = "Large Preview", Location = new Point(6,5), Size = new Size(120,30) };
+            Button folder = new StudioButton { Text = "Open File Location", Location = new Point(132,5), Size = new Size(145,30) };
             buttons.Controls.Add(large); buttons.Controls.Add(folder);
 
             split.Panel1.Controls.Add(list);

@@ -8,35 +8,37 @@ namespace NPPLPrintMaster
 {
     public static class HelpViewer
     {
+        internal static string LoadMarkdown(string fileName, string baseDirectory = null)
+        {
+            if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName) return null;
+            string root = baseDirectory ?? Application.StartupPath;
+            foreach (string path in new[] { Path.Combine(root, "Documents", fileName), Path.Combine(root, fileName) })
+                if (File.Exists(path)) return File.ReadAllText(path);
+            using (var stream = typeof(HelpViewer).Assembly.GetManifestResourceStream("NPPLPrintMaster.Documents." + fileName))
+            {
+                if (stream == null) return null;
+                using (var reader = new StreamReader(stream)) return reader.ReadToEnd();
+            }
+        }
+
         public static void ShowDocument(string title, string fileName)
         {
-            // Point directly to the Documents folder inside your project directory
-            string folderPath = Path.Combine(Application.StartupPath, "Documents");
-            string filePath = Path.Combine(folderPath, fileName);
+            string markdownText = LoadMarkdown(fileName);
+            string htmlContent = "<h1>Document Not Found</h1><p>Could not locate: " + System.Net.WebUtility.HtmlEncode(fileName) + "</p>";
 
-            // If it's not in a Documents subfolder, look right next to the executable
-            if (!File.Exists(filePath))
+            if (markdownText != null)
             {
-                filePath = Path.Combine(Application.StartupPath, fileName);
-            }
-
-            // (Keep the rest of your conversion and Form opening code below this)
-
-            string htmlContent = "<h1>Document Not Found</h1><p>Could not locate: " + fileName + "</p>";
-
-            if (File.Exists(filePath))
-            {
-                // 2. Read the raw markdown text
-                string markdownText = File.ReadAllText(filePath);
-
                 // 3. Convert Markdown to HTML using Markdig
-                string bodyHtml = Markdown.ToHtml(markdownText);
+                string bodyHtml = Markdown.ToHtml(markdownText,
+                    new MarkdownPipelineBuilder().UsePipeTables().Build());
 
-                // 4. Style it with a dark theme to match your NPPL PrintMaster design
+                // Consistent reading styles for the bundled Help documents.
                 htmlContent = $@"
                 <!DOCTYPE html>
                 <html>
                 <head>
+                <meta charset='utf-8'>
+                <meta http-equiv='X-UA-Compatible' content='IE=edge'>
                 <style>
                     body {{
                         font-family: 'Segoe UI', Arial, sans-serif;
@@ -44,9 +46,11 @@ namespace NPPLPrintMaster
                         color: #ffffff;
                         padding: 30px;
                         line-height: 1.6;
+                        max-width: 960px;
+                        margin: 0 auto;
                     }}
                     h1, h2, h3 {{
-                        color: #fcd535; /* Your app's accent yellow */
+                        color: #f97316;
                         border-bottom: 1px solid #444;
                         padding-bottom: 8px;
                     }}
@@ -69,6 +73,19 @@ namespace NPPLPrintMaster
                     li {{
                         margin-bottom: 8px;
                     }}
+                    table {{
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin: 18px 0;
+                    }}
+                    th, td {{
+                        border: 1px solid #49505a;
+                        padding: 10px 12px;
+                        text-align: left;
+                        vertical-align: top;
+                    }}
+                    th {{ background-color: #32353b; color: #ffb17b; }}
+                    hr {{ border: 0; border-top: 1px solid #49505a; margin: 24px 0; }}
                 </style>
                 </head>
                 <body>
@@ -93,7 +110,7 @@ namespace NPPLPrintMaster
 
             browser.DocumentText = htmlContent;
             docForm.Controls.Add(browser);
-            docForm.ShowDialog();
+            using (docForm) docForm.ShowDialog();
         }
     }
 }

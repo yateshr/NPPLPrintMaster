@@ -9,6 +9,7 @@ namespace NPPLPrintMaster
     public partial class Form1
     {
         private Panel modernSettings, modernBrand, modernSidebarFooter;
+        private Label modernWorkspaceNavLabel, modernToolsNavLabel, modernProductionNavLabel;
         private Label modernBreadcrumb, modernWorkspaceStatus, originalCredit;
         private Button modernAccountButton, modernRestoreCurrent;
         private ComboBox modernStyleSelector;
@@ -32,19 +33,26 @@ namespace NPPLPrintMaster
 
         private void BuildModernChrome()
         {
-            modernBrand = new Panel { Dock = DockStyle.Top, Height = 90, BackColor = InterfaceAppearance.ModernTheme().SidebarColor };
+            modernBrand = new Panel { Dock = DockStyle.Top, Height = 90, BackColor = Color.FromArgb(24, 33, 38) };
             modernBrand.Controls.Add(AppBranding.CreateLogo(new Rectangle(16, 19, 46, 46)));
             modernBrand.Controls.Add(new Label { Text = "PrintMaster", Location = new Point(66, 22), Size = new Size(150, 28),
                 ForeColor = Color.White, Font = new Font("Segoe UI", 13, FontStyle.Bold) });
             modernBrand.Controls.Add(new Label { Text = "PRODUCTION WORKSPACE", Location = new Point(67, 50), Size = new Size(150, 18),
                 ForeColor = Color.FromArgb(145, 164, 177), Font = new Font("Segoe UI", 7.5f) });
             originalCredit = pnlSidebar.Controls.OfType<Label>().FirstOrDefault(l => l.Text.StartsWith("Built by"));
-            modernSidebarFooter = new Panel { Dock = DockStyle.Bottom, Height = 64, BackColor = modernBrand.BackColor };
+            modernSidebarFooter = new Panel { Dock = DockStyle.Bottom, Height = 64, BackColor = Color.White };
             modernSidebarFooter.Controls.Add(new Label { Text = "●  Local workspace", Location = new Point(20, 10), Size = new Size(190, 20),
-                Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(132, 213, 174) });
-            modernSidebarFooter.Controls.Add(new Label { Text = "NPPL PrintMaster  /  Preview", Location = new Point(20, 33), Size = new Size(190, 18),
-                Font = new Font("Segoe UI", 8), ForeColor = Color.FromArgb(145, 164, 177) });
+                Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(53, 99, 76) });
+            modernSidebarFooter.Controls.Add(new Label { Text = "Built by Yatesh Rohit", Location = new Point(20, 33), Size = new Size(190, 18),
+                Font = new Font("Segoe UI", 8), ForeColor = Color.FromArgb(88, 101, 114) });
+            modernWorkspaceNavLabel = new Label { Text = "WORKSPACE", Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                ForeColor = Color.FromArgb(106, 119, 132), AutoSize = false };
+            modernToolsNavLabel = new Label { Text = "CREATE", Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                ForeColor = Color.FromArgb(106, 119, 132), AutoSize = false };
+            modernProductionNavLabel = new Label { Text = "PRODUCTION", Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                ForeColor = Color.FromArgb(106, 119, 132), AutoSize = false };
             pnlSidebar.Controls.Add(modernBrand); pnlSidebar.Controls.Add(modernSidebarFooter);
+            pnlSidebar.Controls.Add(modernWorkspaceNavLabel); pnlSidebar.Controls.Add(modernToolsNavLabel); pnlSidebar.Controls.Add(modernProductionNavLabel);
             modernBrand.BringToFront(); modernSidebarFooter.BringToFront();
             modernBreadcrumb = new Label { Text = "NPPL  /  WORKSPACE", Location = new Point(25, 12), Size = new Size(300, 17),
                 Font = new Font("Segoe UI", 8), ForeColor = Color.FromArgb(100, 116, 133) };
@@ -64,6 +72,7 @@ namespace NPPLPrintMaster
             interfacePreviewBadge.Visible = pnlHeader.Width >= 740;
             modernAccountButton.SetBounds(pnlHeader.Width - 68, 22, 44, 36);
             modernWorkspaceStatus.Visible = pnlHeader.Width >= 850;
+            if (modernHeaderAction != null) UpdateModernHeaderAction();
         }
 
         private void ApplyModernPolish(bool modern)
@@ -77,7 +86,10 @@ namespace NPPLPrintMaster
             }
             if (modernBrand != null)
             {
+                modernBrand.BackColor = Color.FromArgb(24, 33, 38);
+                modernSidebarFooter.BackColor = Color.White;
                 modernBrand.Visible = modern; modernSidebarFooter.Visible = modern;
+                modernWorkspaceNavLabel.Visible = modern; modernToolsNavLabel.Visible = modern; modernProductionNavLabel.Visible = modern;
                 modernBreadcrumb.Visible = modern; modernWorkspaceStatus.Visible = modern; modernAccountButton.Visible = modern;
                 pnlLogo.Visible = !modern;
                 if (originalCredit != null) originalCredit.Visible = !modern;
@@ -242,7 +254,7 @@ namespace NPPLPrintMaster
             button.BackColor = primary ? theme.ActiveColor : theme.ContentBg;
             button.ForeColor = primary ? Color.White : theme.TextColor; button.MutedColor = theme.MutedTextColor;
             button.FlatAppearance.BorderColor = primary ? theme.ActiveColor : theme.BorderColor;
-            button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(0, 115, 76) : theme.ButtonHover;
+            button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(154, 52, 18) : theme.ButtonHover;
         }
     }
 }

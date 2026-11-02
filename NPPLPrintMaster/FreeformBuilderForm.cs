@@ -764,7 +764,7 @@ namespace NPPLPrintMaster
             // ====================================================
 
             GroupBox grpQuickText =
-                new GroupBox
+                new StudioGroupBox
                 {
                     Text = "1. Quick Text Entry",
 
@@ -818,7 +818,7 @@ namespace NPPLPrintMaster
                 };
 
             Button btnAddQuickText =
-                new Button
+                new StudioButton
                 {
                     Text =
                         "+ Apply to Selected Label",
@@ -891,7 +891,7 @@ namespace NPPLPrintMaster
             // ====================================================
 
             GroupBox grpLibrary =
-                new GroupBox
+                new StudioGroupBox
                 {
                     Text = "2. Saved Quick Text Library",
 
@@ -953,7 +953,7 @@ namespace NPPLPrintMaster
             LoadCustomTextDropdown();
 
             Button btnInsertSaved =
-                new Button
+                new StudioButton
                 {
                     Text = "Use Selected Text",
 
@@ -992,7 +992,7 @@ namespace NPPLPrintMaster
                 };
 
             Button btnManageLibrary =
-                new Button
+                new StudioButton
                 {
                     Text = "➕ Add / Manage...",
 
@@ -1106,6 +1106,17 @@ namespace NPPLPrintMaster
                 });
 
             Controls.Add(pnlTools);
+
+            if (InterfaceAppearance.IsModern(builderSettings.InterfaceStyle))
+            {
+                // Keep the two command strips and status bar outside the
+                // fill canvas, with tools below the command area.
+                Controls.SetChildIndex(pnlCanvasArea, 0);
+                Controls.SetChildIndex(Controls.OfType<Splitter>().Single(), 1);
+                Controls.SetChildIndex(pnlTools, 2);
+                Controls.SetChildIndex(outputStatusStrip, 3);
+                Controls.SetChildIndex(topToolPanel, 4);
+            }
 
             if (useBarTender10Classic)
             {
@@ -2557,7 +2568,7 @@ namespace NPPLPrintMaster
                             };
 
                         Button btnOk =
-                            new Button
+                            new StudioButton
                             {
                                 Text = "Save",
                                 Left = 310,
@@ -2569,7 +2580,7 @@ namespace NPPLPrintMaster
                             };
 
                         Button btnCancel =
-                            new Button
+                            new StudioButton
                             {
                                 Text = "Cancel",
                                 Left = 200,
@@ -5747,7 +5758,7 @@ namespace NPPLPrintMaster
                     };
 
                 Button btnSaveLib =
-                    new Button
+                    new StudioButton
                     {
                         Text =
                             "💾 Save New Entry",
@@ -5832,7 +5843,7 @@ namespace NPPLPrintMaster
                     };
 
                 Button btnDelete =
-                    new Button
+                    new StudioButton
                     {
                         Text =
                             "🗑️ Delete Selected Entry",

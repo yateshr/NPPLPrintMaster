@@ -55,7 +55,7 @@ namespace NPPLPrintMaster
 
         private void AddZoomButton(FlowLayoutPanel toolbar, string text, Action click)
         {
-            var button = new Button { Text = text, Width = 80, Height = 30, Enabled = false };
+            var button = new StudioButton { Text = text, Width = 80, Height = 30, Enabled = false };
             button.Click += (s, e) => { click(); _canvas.Focus(); };
             toolbar.Controls.Add(button);
             _zoomButtons.Add(button);

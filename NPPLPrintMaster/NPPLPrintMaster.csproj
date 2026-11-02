@@ -179,6 +179,11 @@
     <Compile Include="Form1.Interface.cs" />
     <Compile Include="ModernNavigationButton.cs" />
     <Compile Include="Form1.ModernPolish.cs" />
+    <Compile Include="ModernWorkspaceLayout.cs" />
+    <Compile Include="Form1.WholeModernUi.cs" />
+    <Compile Include="ModernUiSession.cs" />
+    <Compile Include="StudioButton.cs" />
+    <Compile Include="StudioGroupBox.cs" />
     <Compile Include="CollageArrangementForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -243,7 +248,13 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="Documents\" />
+    <Content Include="..\Docs\*.md">
+      <Link>Documents\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <EmbeddedResource Include="..\Docs\*.md">
+      <LogicalName>NPPLPrintMaster.Documents.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">

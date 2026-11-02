@@ -58,9 +58,9 @@ namespace NPPLPrintMaster
             var version = new Label { Text = "Installed version: " + AppUpdateService.CurrentVersion, AutoSize = true, Location = new Point(86, 60) };
             updatesStatus = new Label { Location = new Point(26, 112), Size = new Size(510, 55) };
             updateProgress = new ProgressBar { Location = new Point(26, 174), Size = new Size(510, 18) };
-            checkUpdatesButton = new Button { Text = "Check for updates", Location = new Point(26, 214), Size = new Size(155, 40) };
-            downloadUpdateButton = new Button { Text = "Download now", Location = new Point(190, 214), Size = new Size(150, 40) };
-            installUpdateButton = new Button { Text = "Download && install", Location = new Point(350, 214), Size = new Size(186, 40) };
+            checkUpdatesButton = new StudioButton { Text = "Check for updates", Location = new Point(26, 214), Size = new Size(155, 40) };
+            downloadUpdateButton = new StudioButton { Text = "Download now", Location = new Point(190, 214), Size = new Size(150, 40) };
+            installUpdateButton = new StudioButton { Text = "Download && install", Location = new Point(350, 214), Size = new Size(186, 40) };
             var hint = new Label { Text = "Startup checks are silent unless an update is available.\nThe installer will guide you through closing the app and updating.", Location = new Point(26, 278), Size = new Size(510, 55), ForeColor = Color.DimGray };
             checkUpdatesButton.Click += async (s, e) => await CheckUpdatesAsync(false);
             downloadUpdateButton.Click += async (s, e) => await DownloadUpdateAsync(false);

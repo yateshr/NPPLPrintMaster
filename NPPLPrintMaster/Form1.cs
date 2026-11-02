@@ -66,7 +66,7 @@ namespace NPPLPrintMaster
                 Padding = new Padding(10)
             };
 
-            btnSave = new Button
+            btnSave = new StudioButton
             {
                 Text = "💾 Save Job Card",
                 Size = new Size(160, 40),
@@ -218,7 +218,7 @@ namespace NPPLPrintMaster
                 }
             };
 
-            btnCustomize = new Button
+            btnCustomize = new StudioButton
             {
                 Text = "✏️ Customize / Align Manually",
                 Size = new Size(200, 40),
@@ -238,7 +238,7 @@ namespace NPPLPrintMaster
                 this.Close();
             };
 
-            btnClose = new Button
+            btnClose = new StudioButton
             {
                 Text = "Close",
                 Size = new Size(100, 40),
@@ -369,6 +369,7 @@ namespace NPPLPrintMaster
         private Panel pageHome, pageExtract, pageFormat, pageCompose, pageBtwLibrary, pageSettings;
         private Button activeNavButton;
         private List<Button> navButtons = new List<Button>();
+        private Button sidebarSettingsButton;
         private Splitter sidebarSplitter;
         private MenuStrip menuBar;
 
@@ -534,17 +535,17 @@ namespace NPPLPrintMaster
 
             Label lblWelcome = new Label { Text = "Workflow Automation Suite", Font = new Font("Segoe UI", 14), Location = new Point(0, 0), AutoSize = true };
             Label lblInstr = new Label { Text = "Use the sidebar on the left to navigate between extraction, formatting, and job card building.\n\nYou can drag the line next to the sidebar to shrink or expand it.", Font = new Font("Segoe UI", 11), Location = new Point(0, 40), AutoSize = true };
-            Button btnSaveMem = new Button { Text = "💾 Save Current Workspace", Location = new Point(0, 120), Size = new Size(250, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
+            Button btnSaveMem = new StudioButton { Text = "💾 Save Current Workspace", Location = new Point(0, 120), Size = new Size(250, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnSaveMem.Click += (s, e) => SaveWorkspace();
-            Button btnLoadMem = new Button { Text = "📂 Load Previous Workspace", Location = new Point(270, 120), Size = new Size(250, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
+            Button btnLoadMem = new StudioButton { Text = "📂 Load Previous Workspace", Location = new Point(270, 120), Size = new Size(250, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnLoadMem.Click += (s, e) => LoadWorkspace();
-            Button btnDocs = new Button { Text = "📖 View Documentation / Help", Location = new Point(0, 180), Size = new Size(520, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
+            Button btnDocs = new StudioButton { Text = "📖 View Documentation / Help", Location = new Point(0, 180), Size = new Size(520, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnDocs.Click += (s, e) => HelpViewer.ShowDocument("FAQ & How to Use", "faq.md");
             pageHome.Controls.AddRange(new Control[] { lblWelcome, lblInstr, btnSaveMem, btnLoadMem, btnDocs });
 
-            GroupBox grpStep1 = new GroupBox { Text = "BarTender Auto-Extractor", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(850, 175) };
+            GroupBox grpStep1 = new StudioGroupBox { Text = "BarTender Auto-Extractor", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(850, 175) };
             txtSource1 = new TextBox { Location = new Point(20, 40), Size = new Size(245, 27), ReadOnly = true, Text = "Select .btw Files or Folder..." };
-            Button btnSource1Files = new Button { Text = "Files", Location = new Point(270, 39), Size = new Size(60, 29), FlatStyle = FlatStyle.Flat };
+            Button btnSource1Files = new StudioButton { Text = "Files", Location = new Point(270, 39), Size = new Size(60, 29), FlatStyle = FlatStyle.Flat };
             btnSource1Files.Click += (s, e) =>
             {
                 using (OpenFileDialog ofd = new OpenFileDialog
@@ -564,7 +565,7 @@ namespace NPPLPrintMaster
                     }
                 }
             };
-            Button btnSource1Folder = new Button { Text = "Folder", Location = new Point(335, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
+            Button btnSource1Folder = new StudioButton { Text = "Folder", Location = new Point(335, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
             btnSource1Folder.Click += (s, e) => { string folder = SelectFolderModern("Extraction.SourceFolder"); if (!string.IsNullOrEmpty(folder)) { selectedBtwFolder = folder; selectedBtwFiles = null; txtSource1.Text = folder; } };
             chkSubDirs1 = new CheckBox { Text = "Include Sub-directories", Location = new Point(20, 75), AutoSize = true, Font = new Font("Segoe UI", 10) };
             chkPreserveFolders1 = new CheckBox
@@ -576,14 +577,14 @@ namespace NPPLPrintMaster
                 Checked = false
             };
             txtExport1 = new TextBox { Location = new Point(430, 40), Size = new Size(250, 27), ReadOnly = true, Text = string.IsNullOrEmpty(currentSettings.DefaultExport1) ? "Select Output Folder..." : currentSettings.DefaultExport1 };
-            Button btnExport1 = new Button { Text = "Browse", Location = new Point(690, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
+            Button btnExport1 = new StudioButton { Text = "Browse", Location = new Point(690, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
             btnExport1.Click += (s, e) => { string f = SelectFolderModern("Extraction.OutputFolder"); if (!string.IsNullOrEmpty(f)) txtExport1.Text = f; };
             Label lblFormat = new Label { Text = "Format:", Location = new Point(20, 130), AutoSize = true, Font = new Font("Segoe UI", 10) };
             cmbFormat = new ComboBox { Location = new Point(85, 127), Size = new Size(80, 28), DropDownStyle = ComboBoxStyle.DropDownList };
             cmbFormat.Items.AddRange(new object[] { "jpg", "png", "bmp" }); cmbFormat.SelectedIndex = 0;
             Label lblDpi = new Label { Text = "DPI:", Location = new Point(190, 130), AutoSize = true, Font = new Font("Segoe UI", 10) };
             numDpi = new NumericUpDown { Location = new Point(235, 127), Size = new Size(70, 27), Minimum = 96, Maximum = 2400, Value = currentSettings.DefaultDpi };
-            btnRun1 = new Button { Text = "▶ Extract Images", Location = new Point(430, 90), Size = new Size(330, 50), Font = new Font("Segoe UI", 11, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
+            btnRun1 = new StudioButton { Text = "▶ Extract Images", Location = new Point(430, 90), Size = new Size(330, 50), Font = new Font("Segoe UI", 11, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnRun1.FlatAppearance.BorderSize = 0; btnRun1.Click += BtnRunBlock1_Click;
             chkExtractAndFormat = new CheckBox
             {
@@ -599,7 +600,7 @@ namespace NPPLPrintMaster
             // ====================================================
             // FIND & EXTRACT BTW FILES
             // ====================================================
-            GroupBox grpFindExtract = new GroupBox
+            GroupBox grpFindExtract = new StudioGroupBox
             {
                 Text = "Find & Extract BTW Files",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
@@ -623,7 +624,7 @@ namespace NPPLPrintMaster
                 Text = "Select master BTW directory..."
             };
 
-            Button btnFindMasterBrowse = new Button
+            Button btnFindMasterBrowse = new StudioButton
             {
                 Text = "Browse",
                 Location = new Point(690, 31),
@@ -669,7 +670,7 @@ namespace NPPLPrintMaster
                 WordWrap = false
             };
 
-            Button btnLoadFindList = new Button
+            Button btnLoadFindList = new StudioButton
             {
                 Text = "Load TXT / Excel",
                 Location = new Point(20, 260),
@@ -678,7 +679,7 @@ namespace NPPLPrintMaster
             };
             btnLoadFindList.Click += BtnLoadFindList_Click;
 
-            Button btnClearFindList = new Button
+            Button btnClearFindList = new StudioButton
             {
                 Text = "Clear List",
                 Location = new Point(155, 260),
@@ -692,7 +693,7 @@ namespace NPPLPrintMaster
                 lastFindMatches.Clear();
             };
 
-            btnFindSearch = new Button
+            btnFindSearch = new StudioButton
             {
                 Text = "🔎 Find BTW Files",
                 Location = new Point(255, 260),
@@ -736,7 +737,7 @@ namespace NPPLPrintMaster
                     : currentSettings.DefaultExport1
             };
 
-            Button btnFindOutputBrowse = new Button
+            Button btnFindOutputBrowse = new StudioButton
             {
                 Text = "Browse",
                 Location = new Point(690, 311),
@@ -795,7 +796,7 @@ namespace NPPLPrintMaster
                 Checked = false
             };
 
-            btnFindExtract = new Button
+            btnFindExtract = new StudioButton
             {
                 Text = "▶ Find & Extract",
                 Location = new Point(430, 352),
@@ -825,9 +826,9 @@ namespace NPPLPrintMaster
             });
             pageExtract.Controls.Add(grpFindExtract);
 
-            GroupBox grpStep2 = new GroupBox { Text = "Image Formatting Engine", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(850, 205) };
+            GroupBox grpStep2 = new StudioGroupBox { Text = "Image Formatting Engine", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 0), Size = new Size(850, 205) };
             txtSource2 = new TextBox { Location = new Point(20, 40), Size = new Size(245, 27), ReadOnly = true, Text = "Select Images or Folder..." };
-            Button btnSource2Files = new Button { Text = "Files", Location = new Point(270, 39), Size = new Size(60, 29), FlatStyle = FlatStyle.Flat };
+            Button btnSource2Files = new StudioButton { Text = "Files", Location = new Point(270, 39), Size = new Size(60, 29), FlatStyle = FlatStyle.Flat };
             btnSource2Files.Click += (s, e) =>
             {
                 using (OpenFileDialog ofd = new OpenFileDialog
@@ -847,7 +848,7 @@ namespace NPPLPrintMaster
                     }
                 }
             };
-            Button btnSource2Folder = new Button { Text = "Folder", Location = new Point(335, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
+            Button btnSource2Folder = new StudioButton { Text = "Folder", Location = new Point(335, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
             btnSource2Folder.Click += (s, e) => { string folder = SelectFolderModern("Formatting.SourceFolder"); if (!string.IsNullOrEmpty(folder)) { selectedRawFolder = folder; selectedRawFiles = null; txtSource2.Text = folder; } };
             chkSubDirs2 = new CheckBox { Text = "Include Sub-directories", Location = new Point(20, 75), AutoSize = true, Font = new Font("Segoe UI", 10) };
             chkPreserveFolders2 = new CheckBox
@@ -859,11 +860,11 @@ namespace NPPLPrintMaster
                 Checked = false
             };
             txtExport2 = new TextBox { Location = new Point(430, 40), Size = new Size(250, 27), ReadOnly = true, Text = string.IsNullOrEmpty(currentSettings.DefaultExport2) ? "Select Formatted Output..." : currentSettings.DefaultExport2 };
-            Button btnExport2 = new Button { Text = "Browse", Location = new Point(690, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
+            Button btnExport2 = new StudioButton { Text = "Browse", Location = new Point(690, 39), Size = new Size(70, 29), FlatStyle = FlatStyle.Flat };
             btnExport2.Click += (s, e) => { string f = SelectFolderModern("Formatting.OutputFolder"); if (!string.IsNullOrEmpty(f)) txtExport2.Text = f; };
             Label lblThick = new Label { Text = "Border Width:", Location = new Point(20, 135), AutoSize = true, Font = new Font("Segoe UI", 10) };
             numThickness = new NumericUpDown { Location = new Point(125, 132), Size = new Size(50, 27), Minimum = 0, Maximum = 50, Value = 4 };
-            btnColor = new Button { Text = "Pick Color", Location = new Point(190, 130), Size = new Size(90, 29), BackColor = selectedBorderColor, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+            btnColor = new StudioButton { Text = "Pick Color", Location = new Point(190, 130), Size = new Size(90, 29), BackColor = selectedBorderColor, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
             btnColor.Click += (s, e) => { using (ColorDialog cd = new ColorDialog()) { if (cd.ShowDialog() == DialogResult.OK) { btnColor.BackColor = cd.Color; selectedBorderColor = cd.Color; } } };
             chkPadding = new CheckBox { Text = "Add Padding", Location = new Point(300, 135), AutoSize = true, Font = new Font("Segoe UI", 10) };
 
@@ -885,13 +886,13 @@ namespace NPPLPrintMaster
                 new object[] { "Same as Source", "PNG (Lossless)" });
             cmbFormattingOutputFormat.SelectedIndex = 0;
 
-            Button btnRun2 = new Button { Text = "▶ Format Images", Location = new Point(430, 90), Size = new Size(330, 50), BackColor = Color.MediumPurple, ForeColor = Color.White, Font = new Font("Segoe UI", 11, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
+            Button btnRun2 = new StudioButton { Text = "▶ Format Images", Location = new Point(430, 90), Size = new Size(330, 50), BackColor = Color.MediumPurple, ForeColor = Color.White, Font = new Font("Segoe UI", 11, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnRun2.FlatAppearance.BorderSize = 0; btnRun2.Click += BtnRunBlock2_Click;
 
             grpStep2.Controls.AddRange(new Control[] { txtSource2, btnSource2Files, btnSource2Folder, chkSubDirs2, chkPreserveFolders2, txtExport2, btnExport2, lblThick, numThickness, btnColor, chkPadding, lblFormattingOutputFormat, cmbFormattingOutputFormat, btnRun2 });
             pageFormat.Controls.Add(grpStep2);
 
-            GroupBox grpConsole = new GroupBox { Text = "Live Execution Console", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 225), Size = new Size(850, 260) };
+            GroupBox grpConsole = new StudioGroupBox { Text = "Live Execution Console", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 225), Size = new Size(850, 260) };
 
             rtbFormatConsole = new RichTextBox
             {
@@ -911,7 +912,7 @@ namespace NPPLPrintMaster
             // IMAGE COLLAGE BUILDER
             // Temporary container name - can be renamed later.
             // ====================================================
-            GroupBox grpCollage = new GroupBox
+            GroupBox grpCollage = new StudioGroupBox
             {
                 Text = "Image Collage Builder",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
@@ -1344,21 +1345,21 @@ namespace NPPLPrintMaster
             pnlProducts = CreateLane("Lane 1: Products", 20, pageCompose);
             chkShowText1 = new CheckBox { Text = "Show Text Box Below", Checked = true, Location = new Point(30, 355), AutoSize = true, Font = new Font("Segoe UI", 10) };
             txtLane1Text = new TextBox { Location = new Point(30, 385), Size = new Size(210, 27), Text = "PRODUCT BARCODE {W} X {H} MM", BackColor = Color.FromArgb(50, 52, 59), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
-            Button btnFont1 = new Button { Text = "Aa Font...", Location = new Point(250, 384), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 52, 59) };
+            Button btnFont1 = new StudioButton { Text = "Aa Font...", Location = new Point(250, 384), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 52, 59) };
             btnFont1.Click += (s, e) => { using (FontDialog fd = new FontDialog { Font = fontLane1 }) { if (fd.ShowDialog() == DialogResult.OK) { fontLane1 = fd.Font; } } };
 
             pnlCartons = CreateLane("Lane 2: Cartons", 350, pageCompose);
             chkShowText2 = new CheckBox { Text = "Show Text Box Below", Checked = true, Location = new Point(360, 355), AutoSize = true, Font = new Font("Segoe UI", 10) };
             txtLane2Text = new TextBox { Location = new Point(360, 385), Size = new Size(210, 27), Text = "CARTON BARCODE {W} X {H} MM", BackColor = Color.FromArgb(50, 52, 59), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
-            Button btnFont2 = new Button { Text = "Aa Font...", Location = new Point(580, 384), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 52, 59) };
+            Button btnFont2 = new StudioButton { Text = "Aa Font...", Location = new Point(580, 384), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(50, 52, 59) };
             btnFont2.Click += (s, e) => { using (FontDialog fd = new FontDialog { Font = fontLane2 }) { if (fd.ShowDialog() == DialogResult.OK) { fontLane2 = fd.Font; } } };
 
             pnlOthers = CreateLane("Lane 3: Others", 680, pageCompose);
 
-            Button btnRun3 = new Button { Text = "▶ Generate Job Card", Font = new Font("Segoe UI", 12, FontStyle.Bold), Location = new Point(20, 440), Size = new Size(650, 50), BackColor = Color.FromArgb(252, 213, 53), ForeColor = Color.Black, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
+            Button btnRun3 = new StudioButton { Text = "▶ Generate Job Card", Font = new Font("Segoe UI", 12, FontStyle.Bold), Location = new Point(20, 440), Size = new Size(650, 50), BackColor = Color.FromArgb(252, 213, 53), ForeColor = Color.Black, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
             btnRun3.FlatAppearance.BorderSize = 0; btnRun3.Click += BtnRunBlock3_Click;
 
-            Button btnClear = new Button { Text = "🗑️ Clear All Lanes", Font = new Font("Segoe UI", 10, FontStyle.Bold), Location = new Point(690, 440), Size = new Size(300, 50), BackColor = Color.FromArgb(28, 29, 33), ForeColor = Color.IndianRed, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
+            Button btnClear = new StudioButton { Text = "🗑️ Clear All Lanes", Font = new Font("Segoe UI", 10, FontStyle.Bold), Location = new Point(690, 440), Size = new Size(300, 50), BackColor = Color.FromArgb(28, 29, 33), ForeColor = Color.IndianRed, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
             btnClear.FlatAppearance.BorderSize = 1; btnClear.FlatAppearance.BorderColor = Color.IndianRed;
             btnClear.Click += (s, e) => { ClearAllLanesAndSmartFinder(); };
 
@@ -1389,7 +1390,7 @@ namespace NPPLPrintMaster
             BuildSmartImageFinder();
             BuildBtwImageLibrary();
 
-            GroupBox grpTheme = new GroupBox
+            GroupBox grpTheme = new StudioGroupBox
             {
                 Text = "Appearance",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
@@ -1457,7 +1458,7 @@ namespace NPPLPrintMaster
                     currentSettings.LayoutStyle);
             cmbLayout.SelectedItem = currentSettings.LayoutStyle;
 
-            Button btnResetAppearance = new Button
+            Button btnResetAppearance = new StudioButton
             {
                 Text = "Reset to NPPL Default",
                 Location = new Point(430, 32),
@@ -1511,20 +1512,20 @@ namespace NPPLPrintMaster
                     lblAppearanceResolved
                 });
 
-            GroupBox grpDefs = new GroupBox { Text = "Application Defaults", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 200), Size = new Size(600, 200) };
+            GroupBox grpDefs = new StudioGroupBox { Text = "Application Defaults", Font = new Font("Segoe UI", 11, FontStyle.Bold), Location = new Point(0, 200), Size = new Size(600, 200) };
             Label lblDefDpi = new Label { Text = "Default Extraction DPI:", Location = new Point(20, 40), AutoSize = true, Font = new Font("Segoe UI", 10) };
             numDefDpi = new NumericUpDown { Location = new Point(200, 37), Size = new Size(80, 27), Minimum = 96, Maximum = 2400, Value = currentSettings.DefaultDpi };
             Label lblDefEx1 = new Label { Text = "Default Extraction Output:", Location = new Point(20, 85), AutoSize = true, Font = new Font("Segoe UI", 10) };
             txtDefExport1 = new TextBox { Location = new Point(200, 82), Size = new Size(280, 27), Text = currentSettings.DefaultExport1 };
-            Button btnDefEx1 = new Button { Text = "Browse", Location = new Point(490, 81), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat };
+            Button btnDefEx1 = new StudioButton { Text = "Browse", Location = new Point(490, 81), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat };
             btnDefEx1.Click += (s, e) => { string f = SelectFolderModern("Settings.DefaultExtractionOutput"); if (!string.IsNullOrEmpty(f)) txtDefExport1.Text = f; };
             Label lblDefEx2 = new Label { Text = "Default Formatting Output:", Location = new Point(20, 130), AutoSize = true, Font = new Font("Segoe UI", 10) };
             txtDefExport2 = new TextBox { Location = new Point(200, 127), Size = new Size(280, 27), Text = currentSettings.DefaultExport2 };
-            Button btnDefEx2 = new Button { Text = "Browse", Location = new Point(490, 126), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat };
+            Button btnDefEx2 = new StudioButton { Text = "Browse", Location = new Point(490, 126), Size = new Size(80, 29), FlatStyle = FlatStyle.Flat };
             btnDefEx2.Click += (s, e) => { string f = SelectFolderModern("Settings.DefaultFormattingOutput"); if (!string.IsNullOrEmpty(f)) txtDefExport2.Text = f; };
             grpDefs.Controls.AddRange(new Control[] { lblDefDpi, numDefDpi, lblDefEx1, txtDefExport1, btnDefEx1, lblDefEx2, txtDefExport2, btnDefEx2 });
 
-            btnSaveSettings = new Button { Text = "💾 Save Preferences", Location = new Point(0, 420), Size = new Size(200, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
+            btnSaveSettings = new StudioButton { Text = "💾 Save Preferences", Location = new Point(0, 420), Size = new Size(200, 45), Font = new Font("Segoe UI", 10, FontStyle.Bold), FlatStyle = FlatStyle.Flat };
             btnSaveSettings.Click += (s, e) => SavePreferences();
 
             pageSettings.Controls.AddRange(new Control[] { grpTheme, grpDefs, btnSaveSettings });
@@ -1538,6 +1539,10 @@ namespace NPPLPrintMaster
             btnNavCollage = CreateNavButton("Image Collage", navY); navButtons.Add(btnNavCollage); navY += 50;
             Button btnNavFreeform = CreateNavButton("Freeform Designer", navY); navButtons.Add(btnNavFreeform); navY += 50;
             Button btnNavSettings = CreateNavButton("Settings", navY); navButtons.Add(btnNavSettings);
+            sidebarSettingsButton = btnNavSettings;
+            ((ModernNavigationButton)btnNavSettings).IconIndex = 7;
+            ((ModernNavigationButton)btnNavSettings).ShowIconInCurrentUI = true;
+            pnlSidebar.SizeChanged += (s, e) => LayoutSidebarSettings();
             pnlSidebar.Controls.AddRange(navButtons.ToArray());
 
             navButtons[0].Click += (s, e) => SwitchPage(pageHome, navButtons[0], "Dashboard Home");
@@ -1550,6 +1555,7 @@ namespace NPPLPrintMaster
             btnNavSettings.Click += (s, e) => SwitchPage(pageSettings, btnNavSettings, "Application Settings");
 
             BuildInterfaceSelector();
+            LayoutSidebarSettings();
             CaptureOriginalAppearance();
             SwitchPage(pageHome, navButtons[0], "Dashboard Home");
         }
@@ -1572,6 +1578,37 @@ namespace NPPLPrintMaster
             btn.MouseEnter += (s, e) => { if (btn != activeNavButton) btn.BackColor = sidebarHover; };
             btn.MouseLeave += (s, e) => { if (btn != activeNavButton) btn.BackColor = sidebarColor; };
             return btn;
+        }
+
+        private void LayoutSidebarSettings()
+        {
+            if (sidebarSettingsButton == null) return;
+            bool modern = IsModernInterface;
+            int footerHeight = modern ? 64 : 40;
+            int height = modern ? 42 : 50;
+            int inset = modern ? 10 : 0;
+            int top = Math.Max(0, pnlSidebar.ClientSize.Height - footerHeight - height - (modern ? 8 : 0));
+            sidebarSettingsButton.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+            sidebarSettingsButton.SetBounds(inset, top, pnlSidebar.ClientSize.Width - inset * 2, height);
+            sidebarSettingsButton.Padding = modern ? new Padding(12, 0, 0, 0) : new Padding(44, 0, 0, 0);
+            if (modern)
+            {
+                int step = Math.Min(42, Math.Max(30, (top - 204) / 7));
+                int createStart = top < 450 ? 184 : 190;
+                int productionStart = createStart + 3 * step + 24;
+                if (modernWorkspaceNavLabel != null)
+                {
+                    modernWorkspaceNavLabel.SetBounds(24, 102, pnlSidebar.ClientSize.Width - 40, 18);
+                    modernToolsNavLabel.SetBounds(24, createStart - 22, pnlSidebar.ClientSize.Width - 40, 18);
+                    modernProductionNavLabel.SetBounds(24, productionStart - 22, pnlSidebar.ClientSize.Width - 40, 18);
+                }
+                navButtons[0].SetBounds(10, 123, pnlSidebar.ClientSize.Width - 20, 36);
+                int[] creation = { 5, 3, 6 }, production = { 4, 1, 2 };
+                for (int i = 0; i < creation.Length; i++)
+                    navButtons[creation[i]].SetBounds(10, createStart + i * step, pnlSidebar.ClientSize.Width - 20, Math.Min(40, step));
+                for (int i = 0; i < production.Length; i++)
+                    navButtons[production[i]].SetBounds(10, productionStart + i * step, pnlSidebar.ClientSize.Width - 20, Math.Min(40, step));
+            }
         }
 
         private void SwitchPage(Panel targetPage, Button clickedButton, string headerTitle)

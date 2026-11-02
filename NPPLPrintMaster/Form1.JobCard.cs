@@ -53,7 +53,7 @@ namespace NPPLPrintMaster
             Panel laneWrapper = new Panel { Location = new Point(xPos, 20), Size = new Size(310, 320), BackColor = Color.FromArgb(50, 52, 59) };
             Label lbl = new Label { Text = title, Location = new Point(10, 15), Font = new Font("Segoe UI", 11, FontStyle.Bold), ForeColor = Color.FromArgb(252, 213, 53), AutoSize = true };
             FlowLayoutPanel panel = new FlowLayoutPanel { Location = new Point(10, 45), Size = new Size(290, 230), AllowDrop = true, AutoScroll = true, BackColor = Color.FromArgb(38, 40, 46), BorderStyle = BorderStyle.FixedSingle, Cursor = Cursors.Hand };
-            Button btnBrowse = new Button { Text = "📂 Browse Files...", Location = new Point(10, 280), Size = new Size(290, 30), Font = new Font("Segoe UI", 9, FontStyle.Bold), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(28, 29, 33), ForeColor = Color.White };
+            Button btnBrowse = new StudioButton { Text = "📂 Browse Files...", Location = new Point(10, 280), Size = new Size(290, 30), Font = new Font("Segoe UI", 9, FontStyle.Bold), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(28, 29, 33), ForeColor = Color.White };
             btnBrowse.FlatAppearance.BorderSize = 0;
 
             void OpenBrowse(object s, EventArgs e)

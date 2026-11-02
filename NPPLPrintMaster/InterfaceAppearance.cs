@@ -19,12 +19,12 @@ namespace NPPLPrintMaster
         {
             return new ThemeColors
             {
-                SidebarColor = Color.FromArgb(24, 33, 38), SidebarHover = Color.FromArgb(36, 50, 55),
-                ActiveColor = Color.FromArgb(0, 135, 90), BgLight = Color.FromArgb(245, 247, 250),
+                SidebarColor = Color.White, SidebarHover = Color.FromArgb(255, 246, 240),
+                ActiveColor = Color.FromArgb(194, 65, 12), BgLight = Color.FromArgb(245, 247, 250),
                 ContentBg = Color.White, TextColor = Color.FromArgb(27, 39, 51),
-                ControlBg = Color.White, MutedTextColor = Color.FromArgb(100, 116, 133),
+                ControlBg = Color.White, MutedTextColor = Color.FromArgb(75, 90, 105),
                 BorderColor = Color.FromArgb(218, 226, 234), ReadOnlyBg = Color.FromArgb(246, 248, 250),
-                ButtonHover = Color.FromArgb(236, 243, 240)
+                ButtonHover = Color.FromArgb(255, 241, 231)
             };
         }
     }

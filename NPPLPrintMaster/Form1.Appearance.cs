@@ -47,6 +47,7 @@ namespace NPPLPrintMaster
                     layoutChoice);
 
             bool modernInterface = IsModernInterface;
+            if (!modernInterface) RestoreWholeModernUi();
             if (modernInterface)
             {
                 resolvedTypography = AppearanceManager.NpplOriginalTypography;
@@ -233,6 +234,8 @@ namespace NPPLPrintMaster
             ApplyTypographyStyle(resolvedTypography);
             ApplyCollageDesign();
             ApplyInterfacePresentation();
+            ApplyBtwLibraryTheme();
+            ApplyWholeModernUi(modernInterface);
 
             if (lblAppearanceResolved != null)
             {

@@ -1,270 +1,56 @@
-# NPPLPrintMaster
+# System Requirements & Installation
 
-**Version 1.0.0**  
-**Enterprise Label Automation Suite**
+This page covers setup and dependencies. Everyday workflows are in **Help > FAQ & How to Use**; failure diagnosis is in **Help > Troubleshooting Guide**.
 
-=================================================================
+## Base requirements
 
-Using NPPLPrintMaster is straightforward. The application handles the heavy lifting in the background by communicating directly with the BarTender engine.
+| Requirement | Details |
+| --- | --- |
+| Platform | A company-approved Windows desktop that supports the required .NET Framework. |
+| Runtime | Microsoft **.NET Framework 4.7.2 or newer**. The modern .NET runtime alone is not a substitute. |
+| Application files | Keep the EXE, configuration file, DLLs and native-library subfolders together. |
+| Storage | Enough free space for installation, source images, exports and temporary processing. Setup shows its installation-space estimate. |
+| Permissions | Read access to source folders and write access to the application settings, export and recovery locations. |
+| Resources | Large originals, dense collages and high-DPI rendering need more memory and processing time. Test a representative job on the intended PC. |
 
-# 🚀 How NPPLPrintMaster Works
+## Additional requirements by task
 
-NPPLPrintMaster has been designed to make label image generation as simple as possible. While the user performs only a few clicks, the application automatically executes a complete series of operations in the background.
+- **BarTender extraction and BTW library rendering:** a compatible, properly licensed BarTender installation with its automation components registered. Use IT to confirm edition and environment compatibility. Referenced fonts, external data and printer configuration may also be needed by individual templates.
+- **Existing-image formatting and collage PDF creation:** these tasks do not use the BarTender rendering engine.
+- **SAP DMS upload:** separate SAP access and authorisation, using the company's established procedure. PrintMaster does not provide an SAP login or direct upload service.
+- **Update checks and downloads:** access to the project's GitHub release service. Connectivity is not required merely to open a saved local image job.
 
-Instead of manually opening BarTender templates, taking screenshots, cropping images, renaming files, and organising folders, NPPLPrintMaster performs the entire workflow automatically with consistent accuracy and significantly less effort.
+## Installer or portable copy?
 
----
+### Windows installer
 
-# 📂 Step 1 — Select Your BarTender Templates
-
-Begin by selecting the BarTender **(.BTW)** templates you want to process.
-
-You can choose:
-
-✔ A single template
-
-✔ Multiple templates
-
-✔ An entire folder containing hundreds of templates
-
-Once selected, NPPLPrintMaster prepares every template for automated processing.
-
-**Supported Content**
-
-• Barcode Labels
-
-• MRP Labels
-
-• Product Artwork
-
-• Carton Labels
-
-• Product Information
-
-• Logos & Graphics
-
----
-
-# 🖼 Step 2 — Choose the Output Format
-
-Next, choose the image format you want to generate.
-
-**Supported Formats**
-
-• PNG _(Recommended)_
-
-• BMP
-
-• JPG
-
-• TIFF
-
-PNG is recommended because it provides:
-
-✅ Crystal-clear barcode quality
-
-✅ Sharp text rendering
-
-✅ Lossless image quality
-
-✅ SAP compatibility
-
----
-
-# 🎯 Step 3 — Set the Image Resolution (DPI)
-
-Choose the required image resolution before starting the conversion.
-
-|DPI|Recommended Use|
-|---|---|
-|300|Standard production labels|
-|600|Small barcodes & detailed labels|
-|1200|Ultra-high quality applications|
-
-Higher DPI produces:
-
-✔ Better barcode scanning
-
-✔ Cleaner text
-
-✔ Improved print quality
-
----
-
-# ⚙ Step 4 — Automatic Template Rendering
-
-Click **Generate** and let NPPLPrintMaster handle the rest.
-
-Behind the scenes the software automatically:
-
-✓ Opens the BarTender rendering engine
-
-✓ Loads every template
-
-✓ Renders each label
-
-✓ Maintains the original dimensions
-
-✓ Preserves barcode quality
-
-✓ Creates production-ready images
-
-No screenshots.
-
-No manual cropping.
-
-No resizing.
-
-No unnecessary clicks.
-
----
-
-# 🏷 Step 5 — Smart File Naming
-
-Every exported image is automatically named using its original BarTender filename.
-
-Example
+Run the setup EXE and follow the welcome, information and destination pages. Save open work before continuing. The default per-user location is:
 
 ```text
-MRP-000125.BTW
-
-↓
-
-MRP-000125.PNG
+%LOCALAPPDATA%\Programs\NPPLPrintMaster
 ```
 
-Benefits
+When upgrading, use the existing installation folder to continue using its settings. Setup excludes the user's settings.ini from the files it ships.
 
-✔ No typing mistakes
+### Portable ZIP or local build
 
-✔ No duplicate filenames
+Extract the entire ZIP to a writable folder and run **NPPLPrintMaster.exe**. Do not run it from inside the ZIP or copy only the EXE. A local build can be run directly from its complete bin/Release folder.
 
-✔ Easy searching
+Portable use does not mean every setting is stored in that folder: recovery drafts and downloaded updates use the Windows user-profile locations below.
 
-✔ Better traceability
+## File locations
 
----
+| Item | Location |
+| --- | --- |
+| Preferences | settings.ini beside the running EXE. |
+| Help documents | Documents subfolder beside the EXE; embedded copies are available as a fallback. |
+| Collage recovery | %LOCALAPPDATA%\NPPLPrintMaster\CollageRecovery |
+| Downloaded installers | %LOCALAPPDATA%\NPPLPrintMaster\Updates |
+| Activity log | The Windows Documents folder, then NPPLPrintMaster\PrintLog.txt. Documents may be redirected by company policy. |
+| Saved layouts and exports | The folders you choose in the application. |
 
-# 💾 Step 6 — Automatic Saving
+## Moving to another PC
 
-All generated images are automatically saved to your selected destination folder.
+Keep the complete application distribution together. Copy saved layouts with their source images, retain the folder structure where possible, and verify file access on the new PC. Copy settings.ini only when you want to carry preferences across; saved folder paths may need changing.
 
-NPPLPrintMaster keeps everything organised without requiring additional user input.
-
-This means:
-
-• Faster processing
-
-• Cleaner folder structure
-
-• Reduced manual work
-
-• Easier backups
-
----
-
-# 🔗 Step 7 — SAP DMS Integration
-
-Once generated, the images are ready to be uploaded into the **SAP Document Management System (DMS).**
-
-Each image is linked to its corresponding **Finished Goods (FG) Code**.
-
-This enables SAP to automatically retrieve the correct sample label whenever a Job Card is generated.
-
----
-
-# 📄 Step 8 — Automatic Job Card Workflow
-
-After the images have been uploaded to SAP:
-
-1. PPC creates the Job Card.
-    
-2. SAP automatically inserts the correct sample image.
-    
-3. QC reviews the Job Card.
-    
-4. After approval, IT prints the production labels.
-    
-
-The previous manual workflow is no longer required.
-
----
-
-# 📈 Benefits of NPPLPrintMaster
-
-### ⏱ Saves Time
-
-Reduces repetitive manual work and accelerates the label preparation process.
-
-### 🎯 Improves Accuracy
-
-Eliminates manual cropping, inconsistent naming, and human errors.
-
-### 📦 Standardises Label Management
-
-Every exported image follows the same quality standards and naming convention.
-
-### 🔄 Supports Batch Processing
-
-Generate hundreds of label images in a single operation.
-
-### 🤝 Seamless SAP Integration
-
-Prepared images can be uploaded directly into SAP DMS for automated Job Card generation.
-
-### 🏭 Built for Manufacturing
-
-Designed specifically to support the production workflow at Nirmal Poly Plast Pvt. Ltd.
-
----
-
-# 💡 Workflow Overview
-
-```text
-BarTender (.BTW)
-        │
-        ▼
- NPPLPrintMaster
-        │
-        ▼
- High-Quality Images
-        │
-        ▼
- SAP Document Management System
-        │
-        ▼
- Production Planning (PPC)
-        │
-        ▼
- Quality Control (QC)
-        │
-        ▼
- Bulk Label Printing
-```
-
----
-
-# ✅ Final Result
-
-NPPLPrintMaster transforms a repetitive manual process into a fast, reliable, and standardised workflow.
-
-By automating label rendering, intelligent file naming, image preparation, and SAP integration, the software enables the IT Department to focus on higher-value tasks while improving efficiency, consistency, and collaboration across PPC, QC, and Production.
-
----
-## Developer Information
-
-**Developed by**
-**YATESH ROHIT**  
-IT Department  
-Nirmal Poly Plast Pvt. Ltd.
-
----
-## Copyright
-Except where otherwise noted, all original source code, software architecture, workflow design, documentation, graphical user interface elements, and business logic contained within NPPLPrintMaster are the intellectual property of **Yatesh Rohit**.
-**Copyright © 2026 Yatesh Rohit. All Rights Reserved.**
-
----
-## Powered By
-- BarTender Automation
-- SAP Document Management System (DMS)
-- Microsoft .NET
+Install and license BarTender separately if that PC will render BTW templates. It is not bundled with PrintMaster.

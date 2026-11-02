@@ -12,7 +12,7 @@ namespace NPPLPrintMaster
     {
         private void BuildSmartImageFinder()
         {
-            GroupBox grp = new GroupBox
+            GroupBox grp = new StudioGroupBox
             {
                 Text = "Smart Image Finder V1.2 (Optional)",
                 Location = new Point(20, 520),
@@ -88,9 +88,9 @@ namespace NPPLPrintMaster
                 (s, e) => smartFolderToolTip.SetToolTip(
                     txtSmartCartonFolder,
                     txtSmartCartonFolder.Text);
-            Button bp = new Button { Text = "Folder", Location = new Point(710, 61), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
-            Button bc = new Button { Text = "Folder", Location = new Point(710, 96), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
-            btnSmartRefresh = new Button { Text = "↻ Incremental Refresh", Location = new Point(795, 61), Size = new Size(155, 29), FlatStyle = FlatStyle.Flat };
+            Button bp = new StudioButton { Text = "Folder", Location = new Point(710, 61), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
+            Button bc = new StudioButton { Text = "Folder", Location = new Point(710, 96), Size = new Size(75, 29), FlatStyle = FlatStyle.Flat };
+            btnSmartRefresh = new StudioButton { Text = "↻ Incremental Refresh", Location = new Point(795, 61), Size = new Size(155, 29), FlatStyle = FlatStyle.Flat };
             chkSmartMonitor = new CheckBox { Text = "Monitor folders automatically", Location = new Point(795, 99), Size = new Size(170, 24), Checked = true, Font = new Font("Segoe UI", 8) };
             lblSmartStatus = new Label
             {
@@ -108,7 +108,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 8.25f, FontStyle.Bold)
             };
 
-            Button bfp = new Button
+            Button bfp = new StudioButton
             {
                 Text = "Product Failures",
                 Location = new Point(755, 150),
@@ -117,7 +117,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 8)
             };
 
-            Button bfc = new Button
+            Button bfc = new StudioButton
             {
                 Text = "Carton Failures",
                 Location = new Point(855, 150),
@@ -162,7 +162,7 @@ namespace NPPLPrintMaster
 
         private GroupBox CreateSmartSearchGroup(string title, Point location, bool carton)
         {
-            GroupBox grp = new GroupBox
+            GroupBox grp = new StudioGroupBox
             {
                 Text = title,
                 Location = location,
@@ -181,7 +181,7 @@ namespace NPPLPrintMaster
 
             // Manual Find remains available as a compact fallback because
             // normal scanner/typing searches already happen automatically.
-            Button find = new Button
+            Button find = new StudioButton
             {
                 Text = carton ? "Find Carton" : "Find Product",
                 Location = new Point(320, 31),
@@ -239,7 +239,7 @@ namespace NPPLPrintMaster
                 Font = new Font("Segoe UI", 7.5f)
             };
 
-            Button add = new Button
+            Button add = new StudioButton
             {
                 Text = carton ? "Add to Carton Lane" : "Add to Product Lane",
                 Location = new Point(235, 296),

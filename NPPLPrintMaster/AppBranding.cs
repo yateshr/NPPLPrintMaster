@@ -3,7 +3,7 @@ using System.Windows.Forms;
 
 namespace NPPLPrintMaster
 {
-    // Keep the existing logo embedded so portable copies and dialogs do not
+    // Keep the approved orange logo embedded so portable copies and dialogs do not
     // depend on a loose logo file or the working directory.
     public static class AppBranding
     {
@@ -33,6 +33,11 @@ namespace NPPLPrintMaster
         {
             brandIcon = AppBranding.CreateIcon();
             Icon = brandIcon;
+        }
+        protected override void OnShown(System.EventArgs e)
+        {
+            ModernUiSession.StyleWindow(this);
+            base.OnShown(e);
         }
         protected override void Dispose(bool disposing)
         {

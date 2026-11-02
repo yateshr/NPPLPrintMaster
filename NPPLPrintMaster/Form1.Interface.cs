@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -30,7 +30,7 @@ namespace NPPLPrintMaster
             foreach (Control control in pageSettings.Controls) control.Top += 164;
             pageSettings.AutoScroll = true;
             currentAppearanceGroup = pageSettings.Controls.OfType<GroupBox>().First(g => g.Text == "Appearance");
-            var group = new GroupBox { Text = "Interface experience", Location = Point.Empty,
+            var group = new StudioGroupBox { Text = "Interface experience", Location = Point.Empty,
                 Size = new Size(600, 148), Font = new Font("Segoe UI", 11, FontStyle.Bold) };
             var label = new Label { Text = "Interface", AutoSize = true, Location = new Point(20, 36), Font = new Font("Segoe UI", 10) };
             cmbInterfaceStyle = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList,
@@ -38,7 +38,7 @@ namespace NPPLPrintMaster
             cmbInterfaceStyle.Items.AddRange(new object[] { InterfaceAppearance.Current, InterfaceAppearance.Modern });
             currentSettings.InterfaceStyle = InterfaceAppearance.Normalize(currentSettings.InterfaceStyle);
             cmbInterfaceStyle.SelectedItem = currentSettings.InterfaceStyle;
-            restoreCurrentInterface = new Button { Text = "Use Current UI", Location = new Point(420, 32),
+            restoreCurrentInterface = new StudioButton { Text = "Use Current UI", Location = new Point(420, 32),
                 Size = new Size(155, 30), FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9) };
             restoreCurrentInterface.Click += (s, e) => cmbInterfaceStyle.SelectedItem = InterfaceAppearance.Current;
             interfaceDescription = new Label { Location = new Point(20, 76), Size = new Size(555, 60),
@@ -138,9 +138,10 @@ namespace NPPLPrintMaster
                 foreach (Button button in currentAppearanceGroup.Controls.OfType<Button>()) button.Enabled = !modern;
                 restoreCurrentInterface.Enabled = modern;
                 interfaceDescription.Text = modern
-                    ? "Preview includes the new shell, dashboard and collage workspace. Other tools keep their current layouts. Save Preferences to remember this choice."
+                    ? "Modern workspaces use consistent typography, forms and actions. Current UI remains available. Save Preferences to remember this choice."
                     : "Current UI is the default. Try Modern UI without clearing your work, and switch back here at any time. Save Preferences to remember your choice.";
                 ApplyModernPolish(modern);
+                LayoutSidebarSettings();
                 UpdateInterfaceHeading();
             }
             finally { ResumeLayout(true); }
@@ -161,12 +162,13 @@ namespace NPPLPrintMaster
                 var navigation = button as ModernNavigationButton;
                 if (navigation != null) { navigation.Active = button == activeNavButton; navigation.Invalidate(); }
             }
+            if (modernBrand != null) UpdateModernHeaderAction();
         }
 
         private void BuildModernHome()
         {
             modernHome = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Visible = false };
-            var body = new Panel { Dock = DockStyle.Top, Height = 560 };
+            var body = new Panel { Dock = DockStyle.Top, Height = 460 };
             body.Controls.Add(new Label { Text = "Your print production workspace", Location = new Point(0, 0),
                 Size = new Size(760, 38), Font = new Font("Segoe UI", 21, FontStyle.Bold) });
             body.Controls.Add(new Label { Text = "Choose a workflow to start, or continue an editable workspace.",
@@ -181,14 +183,14 @@ namespace NPPLPrintMaster
             for (int i = 0; i < titles.Length; i++)
             {
                 Action action = actions[i];
-                var card = new CollageCard { Step = i + 1, Height = 208, ShowStepBadge = false };
+                var card = new CollageCard { Step = i + 1, Height = 156, ShowStepBadge = false };
                 card.Controls.Add(new Label { Text = titles[i], Location = new Point(64, 23), Size = new Size(320, 26),
                     Font = new Font("Segoe UI", 12, FontStyle.Bold), AutoEllipsis = true });
-                card.Controls.Add(new Label { Text = descriptions[i], Location = new Point(24, 78), Size = new Size(360, 44),
+                card.Controls.Add(new Label { Text = descriptions[i], Location = new Point(24, 61), Size = new Size(360, 36),
                     Font = new Font("Segoe UI", 10) });
                 string[] buttonTitles = { "Create collage", "Extract labels", "Open library", "Open workspace" };
                 var button = new CollageUiButton { Text = buttonTitles[i], Tag = i == 0 ? "PrimaryAction" : "SecondaryAction",
-                    Location = new Point(24, 146), Size = new Size(180, 38), Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
+                    Location = new Point(24, 106), Size = new Size(180, 36), Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
                 button.Click += (s, e) => action(); card.Controls.Add(button);
                 card.Controls.Add(new ModernIconTile { IconIndex = new[] { 5, 1, 4, 8 }[i], Location = new Point(24, 22), Size = new Size(28, 28) });
                 cards.Add(card); body.Controls.Add(card);
@@ -201,10 +203,10 @@ namespace NPPLPrintMaster
                 int width = Math.Max(420, (body.ClientSize.Width - (columns - 1) * 20) / columns);
                 for (int i = 0; i < cards.Count; i++)
                 {
-                    cards[i].SetBounds((i % columns) * (width + 20), 94 + (i / columns) * 228, width, 208);
+                    cards[i].SetBounds((i % columns) * (width + 20), 94 + (i / columns) * 172, width, 156);
                     cards[i].Controls[0].Width = width - 88; cards[i].Controls[1].Width = width - 48;
                 }
-                body.Height = 94 + ((cards.Count + columns - 1) / columns) * 228;
+                body.Height = 94 + ((cards.Count + columns - 1) / columns) * 172;
             };
             body.SizeChanged += (s, e) => arrange();
             modernHome.Controls.Add(body); pageHome.Controls.Add(modernHome); arrange();
@@ -225,7 +227,7 @@ namespace NPPLPrintMaster
                     button.BackColor = primary ? activeTheme.ActiveColor : activeTheme.ContentBg;
                     button.ForeColor = primary ? ThemeManager.GetContrastTextColor(activeTheme.ActiveColor) : activeTheme.TextColor;
                     button.FlatAppearance.BorderColor = primary ? activeTheme.ActiveColor : activeTheme.BorderColor;
-                    button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(0, 115, 76) : activeTheme.ButtonHover;
+                    button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(154, 52, 18) : activeTheme.ButtonHover;
                 }
             }
         }

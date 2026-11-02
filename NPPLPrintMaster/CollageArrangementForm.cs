@@ -33,6 +33,7 @@ namespace NPPLPrintMaster
         private readonly CollageThumbnailCache _thumbnails;
         private readonly ThemeColors _theme;
         private readonly string _fontFamily;
+        private readonly bool _modernInterface;
 
         // The form's own copy of the page setup. The grid and text size are
         // changed here, and it is only handed back when the arrangement is
@@ -142,6 +143,7 @@ namespace NPPLPrintMaster
                     : AppearanceManager.NormalizeTheme(appSettings.Theme);
 
             bool modernInterface = appSettings != null && InterfaceAppearance.IsModern(appSettings.InterfaceStyle);
+            _modernInterface = modernInterface;
             _theme = modernInterface ? InterfaceAppearance.ModernTheme() : ThemeManager.GetTheme(themeName);
 
             string typography =
@@ -245,6 +247,19 @@ namespace NPPLPrintMaster
 
             Panel center = CreateEditorPanel();
             center.Dock = DockStyle.Fill;
+
+            if (_modernInterface)
+            {
+                // Canvas-first Modern workspace: shared model, commands and
+                // image controls, with the tray below and properties at right.
+                var inspector = left.Controls.OfType<Panel>().First(p => p.Dock == DockStyle.Bottom && p.Height == 252);
+                left.Controls.Remove(inspector); inspector.Dock = DockStyle.Top;
+                inspector.Padding = new Padding(12, 10, 12, 0); right.Controls.Add(inspector);
+                right.Controls.SetChildIndex(inspector, right.Controls.Count - 1);
+                right.Width = 300;
+                left.Dock = DockStyle.Bottom; left.Height = 238;
+                splitter.Dock = DockStyle.Bottom; splitter.Height = 5; splitter.MinSize = 190; splitter.MinExtra = 230;
+            }
 
             // Docking runs from the last control added to the first.
             Controls.Add(center);
@@ -471,6 +486,13 @@ namespace NPPLPrintMaster
             panel.Controls.Add(filterRow);
             panel.Controls.Add(searchRow);
             panel.Controls.Add(headingRow);
+
+            if (_modernInterface)
+            {
+                panel.Controls.Remove(searchRow); searchRow.Dock = DockStyle.Right; searchRow.Width = 250;
+                headingRow.Controls.Add(searchRow); headingRow.Controls.SetChildIndex(searchRow, headingRow.Controls.Count - 1);
+                heading.Text = "IMAGES";
+            }
 
             return panel;
         }
@@ -1446,7 +1468,7 @@ namespace NPPLPrintMaster
 
         private Button CreateButton(string text, int width, bool primary)
         {
-            Button button = new Button
+            Button button = new StudioButton
             {
                 Text = text,
                 Width = width,
@@ -1498,7 +1520,7 @@ namespace NPPLPrintMaster
         {
             return new CollageThemedComboBox(_theme)
             {
-                Width = width,
+                Width = _modernInterface && width >= 120 ? width + 22 : width,
                 Margin = new Padding(0, 3, 4, 4)
             };
         }

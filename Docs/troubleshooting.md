@@ -1,398 +1,75 @@
-# NPPLPrintMaster Help & Documentation
+# Troubleshooting Guide
 
-**Version 1.0.0**  
-**Enterprise Label Automation Suite**
+Find the symptom below and work through its checks. For routine instructions, use **Help > FAQ & How to Use**. For prerequisites and storage paths, use **Help > System Requirements**.
 
-================================================================================
+## The app will not start
 
-## TABLE OF CONTENTS
+1. Extract the entire distribution, including DLLs, configuration and native-library subfolders. Do not launch the EXE inside a ZIP.
+2. Confirm that .NET Framework 4.7.2 or newer is available on the PC.
+3. Try the complete distribution in a writable local folder. If company controls prevent execution, ask IT to review it rather than changing security settings.
+4. Record the exact error and the executable version for support.
 
-1. Introduction
-2. About NPPLPrintMaster
-3. Business Background
-4. The Origin Story – Why This Software Was Built
-5. Workflow Transformation
-6. Key Features
-7. How NPPLPrintMaster Works
-8. Best Practices
-9. Frequently Asked Questions (FAQ)    
-10. System Requirements
-11. Technical Information
-12. End-User Licence Agreement (EULA)
-13. Acknowledgements
-14. Developer Information
-15. Version Information    
+## BarTender cannot start or templates fail to render
 
-================================================================================
+Confirm that BarTender is installed, licensed and able to open a representative template manually. If it cannot, resolve that problem in BarTender first.
 
-# 1. INTRODUCTION
+If it works manually but fails through PrintMaster, ask IT to check the registered BarTender automation components and compatibility with the app. Check any external data sources, fonts or printer configuration used by the template.
 
-Welcome to **NPPLPrintMaster**, an enterprise-grade automation application developed exclusively for **Nirmal Poly Plast Pvt. Ltd.**
+For a batch with missing outputs, test a failing template individually and compare the result count with the selected input count. A batch can continue after an individual template fails.
 
-This documentation explains the purpose of the software, the business problem it solves, its architecture, workflow, operating instructions, technical requirements, and licensing information.
+## Images look blurry or a barcode will not scan
 
-NPPLPrintMaster has been designed to automate repetitive label preparation tasks, improve operational efficiency, reduce manual intervention, and integrate seamlessly with the company's SAP ecosystem.
+- Inspect the original-image preview at 100% before judging a small thumbnail.
+- Compare the source with the exported file at the intended output size. Avoid enlarging a small raster image beyond its useful resolution.
+- For BTW rendering, review format and DPI. PNG avoids JPG compression artefacts.
+- Check whether the PDF viewer, downstream system or print dialog has scaled the label. Compare the printed dimensions and retain required barcode margins.
+- Verify the source barcode and final printed sample through your approved QC process. Increasing DPI alone is not a complete diagnosis.
 
-================================================================================
+## A collage is too dense or its printed size is wrong
 
-# 2. ABOUT NPPLPRINTMASTER
+Review the PDF paper size, orientation, grid and cell text. A larger sheet or fewer cells gives each image more room. A3, A2 and custom paper choices apply to PDF; Word and Excel exports follow their own layouts.
 
-NPPLPrintMaster is an internal enterprise automation platform that bridges the workflow between **BarTender Label Printing Software** and the **SAP Document Management System (SAP DMS)**.
+Confirm the exported PDF page dimensions and the print dialog's scaling settings. A larger PDF sheet will not print at its designed size if it is automatically reduced to a smaller printer sheet.
 
-The software automates the generation of production-ready digital label images directly from BarTender (.BTW) templates, eliminating manual screenshot capture and significantly reducing the workload on the IT Department.
+## A saved layout has missing images
 
-Instead of manually opening each label template, capturing it with the Windows Snipping Tool, cropping the image, renaming the file, and organising it for SAP, NPPLPrintMaster performs the entire process automatically with a single operation.
+Layouts retain source-image paths. Check whether the originals were renamed, moved, deleted or stored on a disconnected share. Restore the expected files or reopen the job with its original source folder available. Moving only a PDF or .npplcollage file does not copy the originals needed to edit the arrangement.
 
-The software generates high-quality images at user-defined DPI settings, maintains consistent file naming, and prepares images for seamless integration into SAP DMS.
+## Recovery is offered, or autosave reports a failure
 
-The result is a faster, more accurate, and standardised label management process that benefits the PPC, IT, Quality Control (QC), and Production departments.
+After an interruption, review the offered draft before continuing and save a named layout once recovered. Recovery is separate from a regular saved layout.
 
----
+If autosave fails, save the layout manually to a writable folder and check permissions and free space in the recovery location listed in System Requirements. Do not delete recovery files while trying to recover an unfinished job.
 
-## Development & Architecture
+## Export or preferences cannot be saved
 
-NPPLPrintMaster was entirely conceptualised, designed, architected, programmed, tested, and implemented by **Yatesh Rohit** while serving in the IT Department at **Nirmal Poly Plast Pvt. Ltd.**
+Check the chosen destination, available disk space and write permission. Close an exported file if another program has locked it. For duplicate source names, separate the outputs or preserve the source-folder structure.
 
-The application is developed using Microsoft C# (.NET Windows Forms) together with carefully selected open-source libraries.
+Preferences are stored beside the EXE. If that folder is read-only, use an approved writable installation location. Moving the app to a different folder can make it appear that earlier preferences were lost.
 
-During development, modern AI-assisted development tools, including Google Gemini AI, Microsoft documentation, BarTender technical documentation, and various GitHub repositories, were used as learning resources and technical references for solving complex programming challenges.
+## Help says Document Not Found
 
-The business logic, workflow design, user interface, software architecture, automation process, and SAP-oriented implementation were independently designed specifically to meet the operational requirements of Nirmal Poly Plast Pvt. Ltd.
+Use a current complete build or installer. The Documents folder should contain about.md, faq.md, license.md, releasenotes.md, requirements.md and troubleshooting.md. Current builds also embed these documents as a fallback.
 
----
+If the problem remains, confirm the running EXE's version and location; an old shortcut may be opening a different copy. Include the Help menu item and filename shown in the error when reporting it.
 
-## Evolution of the Software
+## Explorer or a shortcut still shows an old logo
 
-NPPLPrintMaster did not begin as a Windows application.
+Confirm that the shortcut opens the current EXE. Close and reopen the folder to refresh its display. Windows can retain an older icon after a file is replaced; a stale Explorer icon does not by itself prove that the running app is old. For local rebuilds, the developer's tools/Refresh-AppIcons.ps1 script requests a shell refresh without deleting cache files.
 
-The project's earliest versions consisted of Windows CMD scripts and PowerShell automation that partially automated repetitive tasks. Although these scripts reduced manual effort, they still required operator intervention and technical knowledge.
+## No update appears, or a download fails
 
-Continuous research, experimentation, debugging, optimisation, and architectural redesign gradually transformed those command-line utilities into a professional desktop application featuring:
+Open **Help > Software Updates** and check manually. The app needs a newer public stable release with the expected installer and verification metadata; a local build can already be ahead of it. Startup remains quiet on check failures and when no suitable update is available.
 
-• Automated template processing
+If checking fails, review connectivity with IT and retry. If download verification fails, download again through the update section. Do not launch a partially downloaded installer or bypass a verification failure. The installer remains interactive: save work before allowing it to close the app.
 
-• Intelligent file naming
+## Reporting an issue
 
-• Batch conversion
+Contact your internal IT team or the software maintainer. Include:
 
-• High-resolution image rendering
+- Installed executable version and whether you used Current UI or Modern UI (Preview).
+- The affected workspace, exact steps and full error text.
+- Whether one file fails or every file fails, plus the output settings used.
+- A screenshot and relevant activity-log entries if available. The log location is listed in System Requirements; not every failure produces a log entry.
 
-• Image formatting
-
-• SAP Job Card preparation
-
-• User-friendly graphical interface
-
-• Enterprise workflow automation
-
-Today's application represents the result of extensive research and continuous improvement.
-
-================================================================================
-
-# 3. BUSINESS BACKGROUND
-
-Nirmal Poly Plast Pvt. Ltd. is a leading manufacturer and exporter of plastic household products.
-
-Every manufactured product requires multiple labels before production begins, including:
-
-• MRP Labels
-
-• Product Artwork Labels
-
-• Carton Labels
-
-• Barcode Labels
-
-These labels contain critical manufacturing information such as product name, brand name, barcode, manufacturing date, MRP, address, and other statutory information.
-
-Accuracy is essential because incorrect labels can result in production delays, quality issues, inventory errors, or dispatch problems.
-
-================================================================================
-
-# 4. THE ORIGIN STORY – WHY THIS SOFTWARE WAS BUILT
-
-Before SAP implementation, the label approval process was almost entirely manual.
-
-Whenever the PPC Department planned production, a Job Card was generated and forwarded to the IT Department.
-
-The IT Department then had to:
-
-• Open the required BarTender template
-
-• Render the label
-
-• Capture it using Windows Snipping Tool
-
-• Crop the image manually
-
-• Save the file
-
-• Rename the image
-
-• Print sample labels
-
-• Attach them to the Job Card
-
-• Forward the Job Card to Quality Control
-
-Quality Control inspected the labels, verified correctness, and approved the Job Card before production could begin.
-
-Although functional, this process consumed valuable time and required repetitive manual effort every day.
-
-Following the company's migration from the legacy TCS ERP system to SAP, the implementation of SAP Document Management System (DMS) created an opportunity to redesign the entire workflow.
-
-NPPLPrintMaster was developed to eliminate these repetitive activities by automatically generating standardised label images ready for SAP.
-
-================================================================================
-
-# 5. WORKFLOW TRANSFORMATION
-
-## Previous Workflow
-
-PPC → IT → BarTender → Screenshot → Crop → Rename → Print → QC → Approval → Production
-
-This workflow required continuous IT involvement and introduced opportunities for human error.
-
-## Current Workflow
-
-BarTender → NPPLPrintMaster → SAP DMS → PPC → QC → Production
-
-Images are automatically generated and uploaded against Finished Goods (FG) codes.
-
-When PPC prints the Job Card from SAP, the correct sample label is already available.
-
-The IT Department only prints production labels after QC approval.
-
-================================================================================
-
-# 6. KEY FEATURES
-
-• Automatic BarTender (.BTW) rendering
-
-• High-resolution image generation
-
-• User-defined DPI
-
-• PNG, BMP, JPG and other supported image formats
-
-• Automatic filename generation
-
-• Batch processing
-
-• Image formatting
-
-• Transparent padding
-
-• Automatic coloured borders
-
-• SAP Job Card composition
-
-• Enterprise workflow automation
-
-• Reduced manual intervention
-
-• Standardised label management
-
-================================================================================
-
-# 7. HOW NPPLPRINTMASTER WORKS
-
-1. Select one or more BarTender (.BTW) templates or an entire folder.
-    
-2. Choose the desired output image format.
-    
-3. Specify the required DPI according to business requirements.
-    
-4. Click Generate.
-    
-5. NPPLPrintMaster automatically communicates with the BarTender rendering engine.
-    
-6. Images are generated without requiring manual screenshot capture.
-    
-7. Files are automatically named according to their original template.
-    
-8. Images are saved in the selected output folder.
-    
-9. Upload the generated images into SAP DMS against the appropriate Finished Goods (FG) code.
-    
-10. SAP automatically includes these images during Job Card generation.
-    
-
-================================================================================
-
-# 8. BEST PRACTICES
-
-• Use 300–600 DPI for production-quality images.
-
-• Do not modify approved label templates without authorisation.
-
-• Maintain consistent naming conventions.
-
-• Verify generated images before uploading to SAP.
-
-• Store backup copies of approved templates.
-
-• Periodically review template revisions.
-
-================================================================================
-
-# 9. FREQUENTLY ASKED QUESTIONS (FAQ)
-
-**Q. Does BarTender need to remain open?**
-
-No.
-
-BarTender must be installed and properly licensed; however, NPPLPrintMaster communicates with the BarTender engine in the background.
-
----
-
-**Q. Will my original .BTW files be modified?**
-
-No.
-
-The software accesses templates in read-only mode.
-
----
-
-**Q. Can I process multiple templates simultaneously?**
-
-Yes.
-
-Batch processing is fully supported.
-
----
-
-**Q. Which DPI should I use?**
-
-300 DPI is recommended.
-
-600 DPI is recommended for very small barcodes or detailed labels.
-
----
-
-**Q. What image formats are supported?**
-
-Depending on the installed BarTender version:
-
-PNG
-
-BMP
-
-JPG
-
-TIFF
-
-and other supported export formats.
-
-================================================================================
-
-# 10. SYSTEM REQUIREMENTS
-
-Operating System:
-
-Windows 10 or later
-
-Required Software:
-
-• Microsoft .NET Runtime
-
-• BarTender (Licensed)
-
-• SAP Access (for DMS upload)
-
-Memory:
-
-Minimum 4 GB RAM
-
-Recommended 8 GB RAM
-
-================================================================================
-
-# 11. TECHNICAL INFORMATION
-
-Programming Language:  
-Microsoft C#
-
-Framework:  
-.NET Windows Forms
-
-Rendering Engine:  
-BarTender Automation
-
-Target Environment:  
-Enterprise Manufacturing
-
-Integration:  
-SAP Document Management System
-
-================================================================================
-
-# 12. END-USER LICENCE AGREEMENT (EULA)
-
-NPPLPrintMaster is proprietary software developed specifically for Nirmal Poly Plast Pvt. Ltd.
-
-Copyright © 2026 Yatesh Rohit.
-
-All Rights Reserved.
-
-This software is provided "AS IS" without warranty of any kind.
-
-No person may copy, modify, reverse engineer, redistribute, sublicense, or commercially exploit this software without prior written authorisation.
-
-Authorised internal use within Nirmal Poly Plast Pvt. Ltd. is permitted.
-
-================================================================================
-
-# 13. ACKNOWLEDGEMENTS
-
-The development of NPPLPrintMaster was supported through continuous self-learning, experimentation, technical documentation, and community resources.
-
-Special thanks to:
-
-• Google Gemini AI
-
-• GitHub Open Source Community
-
-• Microsoft Learn
-
-• Seagull Scientific (BarTender Documentation)
-
-================================================================================
-
-# 14. DEVELOPER INFORMATION
-
-Developed by
-
-**Yatesh Rohit**
-
-IT Department
-
-Nirmal Poly Plast Pvt. Ltd.
-
-================================================================================
-
-# 15. VERSION INFORMATION
-
-Product Name:  
-NPPLPrintMaster
-
-Current Version:  
-1.0.0
-
-Category:  
-Enterprise Label Automation Suite
-
-Release Year:  
-2026
-
-Platform:  
-Microsoft Windows
-
-Status:  
-Production Release
-
-================================================================================
-
-**NPPLPrintMaster is the result of continuous research, practical problem-solving, and a commitment to improving manufacturing efficiency through automation. By replacing repetitive manual processes with intelligent software, it helps standardise label management, improve operational accuracy, and support the digital transformation initiatives of Nirmal Poly Plast Pvt. Ltd.**
-
-**Copyright © 2026 Yatesh Rohit. All Rights Reserved.**
+Review logs and screenshots for internal product names and paths before sharing them outside the approved support channel. Keep original templates and a copy of the affected layout available for diagnosis.

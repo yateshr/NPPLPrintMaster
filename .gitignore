@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Local build outputs and scratch files
+NPPLPrintMaster/output/
+NPPLPrintMaster/tmp/

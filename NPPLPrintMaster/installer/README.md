@@ -22,3 +22,9 @@ Both downloaded length and SHA-256 must match GitHub's asset metadata before ins
 Keep the repository/releases public; no credentials are embedded in the app. If releases are private, a public release feed is needed.
 The updater is implemented locally; this change does not publish a release or install Inno Setup.
 Code signing the release installer is recommended for Windows publisher identification.
+
+## Installer presentation and local icon refresh
+
+Welcome and Finished pages are explicitly enabled; their vertical orange brand panel is configured by WizardImageFile. Inner pages use the small orange header logo. BeforeInstall.rtf and AfterInstall.rtf provide formatted introduction and getting-started pages. ChangesAssociations requests a shell icon refresh when setup completes.
+
+For a local rebuild that still shows a cached icon in Explorer, run tools/Refresh-AppIcons.ps1 from the project directory. This notifies the Windows shell without deleting icon-cache files or restarting Explorer. VerifyBranding checks the actual executable resources independently of Explorer's cache. VerifyInstallerContent loads the RTF guides in a Windows RichTextBox to check their formatting.

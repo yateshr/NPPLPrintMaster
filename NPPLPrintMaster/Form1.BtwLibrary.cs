@@ -416,6 +416,22 @@ namespace NPPLPrintMaster
                     if (searchHost.ClientSize.Width <= 0)
                         return;
 
+                    if (IsModernInterface)
+                    {
+                        bool narrow = searchHost.ClientSize.Width < 1050;
+                        searchFlow.AutoSize = false; searchFlow.WrapContents = true;
+                        searchFlow.SetFlowBreak(cmbBtwLibraryStatus, narrow);
+                        searchFlow.Width = Math.Max(300, searchHost.ClientSize.Width - 16);
+                        searchFlow.Height = narrow ? 80 : 40;
+                        txtBtwLibrarySearch.Width = narrow ? Math.Max(180, searchFlow.Width - cmbBtwLibraryStatus.Width - 22) : 340;
+                        commandBody.RowStyles[0].Height = narrow ? 80 : 44;
+                        searchFlow.Location = new Point(8, 0); searchFlow.PerformLayout();
+                        return;
+                    }
+                    commandBody.RowStyles[0].Height = 44;
+                    searchFlow.SetFlowBreak(cmbBtwLibraryStatus, false);
+                    searchFlow.WrapContents = false; searchFlow.AutoSize = true;
+
                     // Keep the search box responsive while the action buttons
                     // retain stable compact widths.
                     int fixedWidth =
@@ -1087,7 +1103,7 @@ namespace NPPLPrintMaster
             Color borderColor)
         {
             Panel outer =
-                new Panel
+                new StudioSectionPanel
                 {
                     Dock = DockStyle.Fill,
                     BackColor = backColor,
@@ -1144,7 +1160,7 @@ namespace NPPLPrintMaster
             int width)
         {
             Button button =
-                new Button
+                new StudioButton
                 {
                     Text = text,
                     Font = font,

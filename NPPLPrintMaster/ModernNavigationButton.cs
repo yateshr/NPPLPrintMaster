@@ -10,6 +10,7 @@ namespace NPPLPrintMaster
         public bool ModernStyle;
         public bool Active;
         public int IconIndex;
+        public bool ShowIconInCurrentUI;
         private bool hovered;
         public ModernNavigationButton()
         {
@@ -20,15 +21,27 @@ namespace NPPLPrintMaster
         protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hovered = false; Invalidate(); }
         protected override void OnPaint(PaintEventArgs e)
         {
-            if (!ModernStyle) { base.OnPaint(e); return; }
+            if (!ModernStyle)
+            {
+                base.OnPaint(e);
+                if (ShowIconInCurrentUI)
+                {
+                    e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                    DrawIcon(e.Graphics, new Rectangle(20, (Height - 18) / 2, 18, 18), IconIndex, ForeColor);
+                }
+                return;
+            }
             Color background = Parent.BackColor;
-            Color text = Active ? Color.FromArgb(113, 231, 181) : Color.FromArgb(184, 196, 207);
+            Color text = Active ? Color.FromArgb(177, 54, 10) : Color.FromArgb(54, 67, 80);
             e.Graphics.Clear(background);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             if (Active || hovered)
                 using (var path = CollageShapes.Rounded(new RectangleF(1, 1, Width - 2, Height - 2), 8))
-                using (var fill = new SolidBrush(Active ? Color.FromArgb(24, 65, 54) : Color.FromArgb(36, 47, 55)))
+                using (var fill = new SolidBrush(Active ? Color.FromArgb(255, 238, 228) : Color.FromArgb(248, 250, 252)))
                     e.Graphics.FillPath(fill, path);
+            if (Active)
+                using (var mark = new SolidBrush(Color.FromArgb(194, 65, 12)))
+                    e.Graphics.FillRectangle(mark, 1, 10, 3, Height - 20);
             DrawIcon(e.Graphics, new Rectangle(17, (Height - 18) / 2, 18, 18), IconIndex, text);
             TextRenderer.DrawText(e.Graphics, Text.Trim(), Font, new Rectangle(47, 0, Width - 55, Height), text,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
@@ -67,10 +80,14 @@ namespace NPPLPrintMaster
                     case 8:
                         g.DrawPolygon(pen, new[] { new Point(2, 5), new Point(8, 5), new Point(10, 7), new Point(18, 7), new Point(18, 17), new Point(2, 17) }); break;
                     default:
-                        g.DrawEllipse(pen, 5, 5, 10, 10); g.DrawEllipse(pen, 8, 8, 4, 4);
-                        for (int i = 0; i < 8; i++) { double a = i * Math.PI / 4; g.DrawLine(pen,
-                            10 + (float)Math.Cos(a) * 7, 10 + (float)Math.Sin(a) * 7,
-                            10 + (float)Math.Cos(a) * 9, 10 + (float)Math.Sin(a) * 9); } break;
+                        var teeth = new PointF[32];
+                        for (int i = 0; i < teeth.Length; i++)
+                        {
+                            double a = i * Math.PI / 16 - Math.PI / 2;
+                            float radius = i % 4 == 1 || i % 4 == 2 ? 9 : 6.8f;
+                            teeth[i] = new PointF(10 + (float)Math.Cos(a) * radius, 10 + (float)Math.Sin(a) * radius);
+                        }
+                        g.DrawPolygon(pen, teeth); g.DrawEllipse(pen, 7, 7, 6, 6); break;
                 }
             }
             g.Restore(state);
@@ -86,8 +103,8 @@ namespace NPPLPrintMaster
             e.Graphics.Clear(Parent.BackColor);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using (var path = CollageShapes.Rounded(new RectangleF(0, 0, Width - 1, Height - 1), 7))
-            using (var fill = new SolidBrush(Color.FromArgb(229, 245, 237))) e.Graphics.FillPath(fill, path);
-            ModernNavigationButton.DrawIcon(e.Graphics, new Rectangle(7, 7, Width - 14, Height - 14), IconIndex, Color.FromArgb(0, 135, 90));
+            using (var fill = new SolidBrush(Color.FromArgb(255, 239, 230))) e.Graphics.FillPath(fill, path);
+            ModernNavigationButton.DrawIcon(e.Graphics, new Rectangle(7, 7, Width - 14, Height - 14), IconIndex, Color.FromArgb(194, 65, 12));
         }
     }
 }

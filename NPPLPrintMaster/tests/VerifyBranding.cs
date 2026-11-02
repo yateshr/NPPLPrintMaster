@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using NPPLPrintMaster;
 class BrandQuietForm : Form1
@@ -11,27 +12,39 @@ class BrandQuietForm : Form1
 }
 class VerifyBranding
 {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern uint ExtractIconEx(string file, int index, IntPtr[] large, IntPtr[] small, uint count);
+    [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
+    static Icon ReadExecutableIcon(string file)
+    {
+        // Extract the PE resource directly; the shell association cache can
+        // still contain the previous logo after a local rebuild.
+        var large = new IntPtr[1]; var small = new IntPtr[1];
+        Check(ExtractIconEx(file, 0, large, small, 1) > 0, "Missing executable icon resource");
+        try { using (var borrowed = Icon.FromHandle(large[0])) return (Icon)borrowed.Clone(); }
+        finally { if (large[0] != IntPtr.Zero) DestroyIcon(large[0]); if (small[0] != IntPtr.Zero) DestroyIcon(small[0]); }
+    }
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
-    static void CheckArtwork(Icon icon)
+    static void CheckArtwork(Icon icon, string context = "window icon")
     {
         Check(icon != null, "Missing icon");
         using (var bitmap = icon.ToBitmap())
         {
-            int gold = 0;
+            int orange = 0;
             for (int y = 0; y < bitmap.Height; y++) for (int x = 0; x < bitmap.Width; x++)
             {
                 Color c = bitmap.GetPixel(x, y);
-                if (c.A > 100 && c.R > 150 && c.G > 90 && c.R > c.B * 1.25) gold++;
+                if (c.A > 100 && c.R > 210 && c.G > 60 && c.G < 180 && c.B < 70) orange++;
             }
-            Check(gold > bitmap.Width * bitmap.Height / 10, "Expected existing gold/orange artwork");
+            Check(orange > bitmap.Width * bitmap.Height / 4, "Expected approved orange page/P logo in " + context + "; found " + orange + " orange pixels in " + bitmap.Size);
         }
     }
     [STAThread] static void Main(string[] args)
     {
         Application.EnableVisualStyles();
-        using (var icon = AppBranding.CreateIcon()) CheckArtwork(icon);
-        using (var icon = Icon.ExtractAssociatedIcon(typeof(Form1).Assembly.Location)) CheckArtwork(icon);
-        if (args.Length > 0) using (var icon = Icon.ExtractAssociatedIcon(args[0])) CheckArtwork(icon);
+        using (var icon = AppBranding.CreateIcon()) CheckArtwork(icon, "embedded resource");
+        using (var icon = ReadExecutableIcon(typeof(Form1).Assembly.Location)) CheckArtwork(icon, "executable");
+        if (args.Length > 0) using (var icon = ReadExecutableIcon(args[0])) CheckArtwork(icon);
         foreach (var type in typeof(Form1).Assembly.GetTypes().Where(t => typeof(Form).IsAssignableFrom(t)))
             Check(typeof(BrandedForm).IsAssignableFrom(type), "Unbranded form: " + type.Name);
         using (var main = new BrandQuietForm())
